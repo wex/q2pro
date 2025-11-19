@@ -3,8 +3,8 @@ project('q2pro', 'c',
   version: run_command(find_program('python3'), 'version.py', check: true).stdout().strip(),
   meson_version: '>= 0.59.0',
   default_options: [
-    'c_std=c11',
-    'buildtype=release',
+    'c_std=gnu99',
+    'buildtype=debugoptimized',
   ],
 )
 
