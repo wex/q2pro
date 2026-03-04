@@ -446,7 +446,7 @@ void LookAtKiller(edict_t *self, edict_t *inflictor, edict_t *attacker)
     }
 
     if (dir[0])
-        self->client->killer_yaw = RAD2DEG(atan2(dir[1], dir[0]));
+        self->client->killer_yaw = RAD2DEG(atan2f(dir[1], dir[0]));
     else {
         self->client->killer_yaw = 0;
         if (dir[1] > 0)
@@ -656,7 +656,7 @@ float   PlayersRangeFromSpot(edict_t *spot)
 
     bestplayerdistance = 9999999;
 
-    for (n = 1; n <= maxclients->value; n++) {
+    for (n = 1; n <= game.maxclients; n++) {
         player = &g_edicts[n];
 
         if (!player->inuse)
@@ -938,7 +938,7 @@ void respawn(edict_t *self)
 
         // hold in place briefly
         self->client->ps.pmove.pm_flags = PMF_TIME_TELEPORT;
-        self->client->ps.pmove.pm_time = 14;
+        self->client->ps.pmove.pm_time = 112 >> PM_TIME_SHIFT;
 
         self->client->respawn_framenum = level.framenum;
 
@@ -974,7 +974,7 @@ void spectator_respawn(edict_t *ent)
         }
 
         // count spectators
-        for (i = 1, numspec = 0; i <= maxclients->value; i++)
+        for (i = 1, numspec = 0; i <= game.maxclients; i++)
             if (g_edicts[i].inuse && g_edicts[i].client->pers.spectator)
                 numspec++;
 
@@ -1018,7 +1018,7 @@ void spectator_respawn(edict_t *ent)
 
         // hold in place briefly
         ent->client->ps.pmove.pm_flags = PMF_TIME_TELEPORT;
-        ent->client->ps.pmove.pm_time = 14;
+        ent->client->ps.pmove.pm_time = 112 >> PM_TIME_SHIFT;
     }
 
     ent->client->respawn_framenum = level.framenum;
@@ -1130,7 +1130,7 @@ void PutClientInServer(edict_t *ent)
     if (deathmatch->value && ((int)dmflags->value & DF_FIXED_FOV)) {
         client->ps.fov = 90;
     } else {
-        client->ps.fov = atoi(Info_ValueForKey(client->pers.userinfo, "fov"));
+        client->ps.fov = Q_atoi(Info_ValueForKey(client->pers.userinfo, "fov"));
         if (client->ps.fov < 1)
             client->ps.fov = 90;
         else if (client->ps.fov > 160)
@@ -1227,7 +1227,7 @@ void ClientBeginDeathmatch(edict_t *ent)
 
     if (level.intermission_framenum) {
         MoveClientToIntermission(ent);
-    } else {
+    } else if (!ent->client->pers.spectator) {
         // send effect
         gi.WriteByte(svc_muzzleflash);
         gi.WriteShort(ent - g_edicts);
@@ -1236,7 +1236,7 @@ void ClientBeginDeathmatch(edict_t *ent)
 
         // hold in place briefly
         ent->client->ps.pmove.pm_flags = PMF_TIME_TELEPORT;
-        ent->client->ps.pmove.pm_time = 200 >> 3;
+        ent->client->ps.pmove.pm_time = 200 >> PM_TIME_SHIFT;
     }
 
     gi.bprintf(PRINT_HIGH, "%s entered the game\n", ent->client->pers.netname);
@@ -1284,7 +1284,7 @@ void ClientBegin(edict_t *ent)
 
         // hold in place briefly
         ent->client->ps.pmove.pm_flags = PMF_TIME_TELEPORT;
-        ent->client->ps.pmove.pm_time = 200 >> 3;
+        ent->client->ps.pmove.pm_time = 200 >> PM_TIME_SHIFT;
     }
 
     if (level.intermission_framenum) {
@@ -1349,7 +1349,7 @@ void ClientUserinfoChanged(edict_t *ent, char *userinfo)
     if (deathmatch->value && ((int)dmflags->value & DF_FIXED_FOV)) {
         ent->client->ps.fov = 90;
     } else {
-        ent->client->ps.fov = atoi(Info_ValueForKey(userinfo, "fov"));
+        ent->client->ps.fov = Q_atoi(Info_ValueForKey(userinfo, "fov"));
         if (ent->client->ps.fov < 1)
             ent->client->ps.fov = 90;
         else if (ent->client->ps.fov > 160)
@@ -1359,7 +1359,7 @@ void ClientUserinfoChanged(edict_t *ent, char *userinfo)
     // handedness
     s = Info_ValueForKey(userinfo, "hand");
     if (strlen(s)) {
-        ent->client->pers.hand = atoi(s);
+        ent->client->pers.hand = Q_atoi(s);
     }
 
     // save off the userinfo in case we want to check something later
@@ -1402,7 +1402,7 @@ qboolean ClientConnect(edict_t *ent, char *userinfo)
         }
 
         // count spectators
-        for (i = numspec = 0; i < maxclients->value; i++)
+        for (i = numspec = 0; i < game.maxclients; i++)
             if (g_edicts[i + 1].inuse && g_edicts[i + 1].client->pers.spectator)
                 numspec++;
 
@@ -1488,15 +1488,20 @@ void ClientDisconnect(edict_t *ent)
 //==============================================================
 
 edict_t *pm_passent;
+int pm_clipmask;
 
 // pmove doesn't need to know about passent and contentmask
+#if USE_NEW_GAME_API
+trace_t q_gameabi PM_trace(const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int contentmask)
+{
+    return gi.trace(start, mins, maxs, end, pm_passent, (game.csr.extended && contentmask) ? contentmask : pm_clipmask);
+}
+#else
 trace_t q_gameabi PM_trace(const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end)
 {
-    if (pm_passent->health > 0)
-        return gi.trace(start, mins, maxs, end, pm_passent, MASK_PLAYERSOLID);
-    else
-        return gi.trace(start, mins, maxs, end, pm_passent, MASK_DEADSOLID);
+    return gi.trace(start, mins, maxs, end, pm_passent, pm_clipmask);
 }
+#endif
 
 /*
 ==============
@@ -1525,8 +1530,6 @@ void ClientThink(edict_t *ent, usercmd_t *ucmd)
         return;
     }
 
-    pm_passent = ent;
-
     if (ent->client->chase_target) {
 
         client->resp.cmd_angles[0] = SHORT2ANGLE(ucmd->angles[0]);
@@ -1546,6 +1549,12 @@ void ClientThink(edict_t *ent, usercmd_t *ucmd)
             client->ps.pmove.pm_type = PM_DEAD;
         else
             client->ps.pmove.pm_type = PM_NORMAL;
+
+        pm_passent = ent;
+        if (ent->health > 0)
+            pm_clipmask = MASK_PLAYERSOLID;
+        else
+            pm_clipmask = MASK_DEADSOLID;
 
         client->ps.pmove.gravity = sv_gravity->value;
         pm.s = client->ps.pmove;
@@ -1665,7 +1674,7 @@ void ClientThink(edict_t *ent, usercmd_t *ucmd)
     }
 
     // update chase cam if being followed
-    for (i = 1; i <= maxclients->value; i++) {
+    for (i = 1; i <= game.maxclients; i++) {
         other = g_edicts + i;
         if (other->inuse && other->client->chase_target == ent)
             UpdateChaseCam(other);

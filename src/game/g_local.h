@@ -168,7 +168,7 @@ typedef enum {
 #define SFL_CROSS_TRIGGER_6     BIT(5)
 #define SFL_CROSS_TRIGGER_7     BIT(6)
 #define SFL_CROSS_TRIGGER_8     BIT(7)
-#define SFL_CROSS_TRIGGER_MASK  (BIT(8) - 1)
+#define SFL_CROSS_TRIGGER_MASK  MASK(8)
 
 // noise types for PlayerNoise
 #define PNOISE_SELF             0
@@ -247,6 +247,19 @@ typedef struct gitem_s {
     const char *const   *precaches;     // array of all models, sounds, and images this item will use
 } gitem_t;
 
+typedef struct precache_s {
+    struct precache_s   *next;
+    void                (*func)(void);
+} precache_t;
+
+// new game API can be used w/o protocol extensions,
+// so this needs to be dynamic
+#if USE_NEW_GAME_API
+#define PM_TIME_SHIFT   (game.csr.extended ? 0 : 3)
+#else
+#define PM_TIME_SHIFT   3
+#endif
+
 //
 // this structure is left intact through an entire game
 // it should be initialized at dll load time, and read/written to
@@ -277,6 +290,8 @@ typedef struct {
     bool        autosaved;
 
     cs_remap_t  csr;
+
+    precache_t  *precaches;
 } game_locals_t;
 
 //
@@ -431,7 +446,6 @@ extern  game_export_t   globals;
 extern  spawn_temp_t    st;
 
 extern  int sm_meat_index;
-extern  int snd_fry;
 
 //extern  int jacket_armor_index;
 //extern  int combat_armor_index;
@@ -611,7 +625,6 @@ edict_t *G_Spawn(void);
 void    G_FreeEdict(edict_t *e);
 
 void    G_TouchTriggers(edict_t *ent);
-void    G_TouchSolids(edict_t *ent);
 
 char    *G_CopyString(char *in);
 
@@ -787,6 +800,12 @@ void UpdateChaseCam(edict_t *ent);
 void ChaseNext(edict_t *ent);
 void ChasePrev(edict_t *ent);
 void GetChaseTarget(edict_t *ent);
+
+//
+// g_spawn.c
+//
+void G_AddPrecache(void (*func)(void));
+void G_RefreshPrecaches(void);
 
 //============================================================================
 

@@ -60,7 +60,7 @@ typedef struct gtv_s {
     netstream_t stream;
     char        address[MAX_QPATH];
     byte        *data;
-    size_t      msglen;
+    unsigned    msglen;
     unsigned    flags;
 #if USE_ZLIB
     bool        z_act; // true when actively inflating
@@ -254,20 +254,20 @@ mvd_t *MVD_SetChannel(int arg)
         }
     } else
 #endif
-        if (COM_IsUint(s)) {
-            id = atoi(s);
-            FOR_EACH_MVD(mvd) {
-                if (mvd->id == id) {
-                    return mvd;
-                }
-            }
-        } else {
-            FOR_EACH_MVD(mvd) {
-                if (!strcmp(mvd->name, s)) {
-                    return mvd;
-                }
+    if (COM_IsUint(s)) {
+        id = Q_atoi(s);
+        FOR_EACH_MVD(mvd) {
+            if (mvd->id == id) {
+                return mvd;
             }
         }
+    } else {
+        FOR_EACH_MVD(mvd) {
+            if (!strcmp(mvd->name, s)) {
+                return mvd;
+            }
+        }
+    }
 
     Com_Printf("No such channel ID: %s\n", s);
     return NULL;
@@ -355,7 +355,7 @@ static gtv_t *gtv_set_conn(int arg)
     }
 
     if (COM_IsUint(s)) {
-        id = atoi(s);
+        id = Q_atoi(s);
         FOR_EACH_GTV(gtv) {
             if (gtv->id == id) {
                 return gtv;
@@ -505,9 +505,7 @@ static int demo_skip_map(qhandle_t f)
         }
     }
 
-    SZ_Init(&msg_read, msg_read_buffer, sizeof(msg_read_buffer));
-    msg_read.cursize = msglen;
-
+    SZ_InitRead(&msg_read, msg_read_buffer, msglen);
     return msglen;
 }
 
@@ -519,9 +517,7 @@ static int demo_read_message(qhandle_t f)
         return msglen;
     }
 
-    SZ_Init(&msg_read, msg_read_buffer, sizeof(msg_read_buffer));
-    msg_read.cursize = msglen;
-
+    SZ_InitRead(&msg_read, msg_read_buffer, msglen);
     return msglen;
 }
 
@@ -557,12 +553,12 @@ static void demo_emit_snapshot(mvd_t *mvd)
     int64_t pos;
     char *from, *to;
     size_t len;
-    int i, bits;
+    int i;
 
     if (mvd_snaps->integer <= 0)
         return;
 
-    if (mvd->framenum < mvd->last_snapshot + mvd_snaps->integer * 10)
+    if (mvd->framenum < mvd->last_snapshot + mvd_snaps->integer * BASE_FRAMERATE)
         return;
 
     if (mvd->numsnapshots >= MAX_SNAPSHOTS)
@@ -610,8 +606,7 @@ static void demo_emit_snapshot(mvd_t *mvd)
         for (cs = player->configstrings; cs; cs = cs->next)
             len += 4 + strlen(cs->string);
 
-        bits = (len >> 8) & 7;
-        MSG_WriteByte(mvd_unicast | (bits << SVCMD_BITS));
+        MSG_WriteByte(mvd_unicast | (len >> 8 << SVCMD_BITS));
         MSG_WriteByte(len & 255);
         MSG_WriteByte(i);
         for (cs = player->configstrings; cs; cs = cs->next) {
@@ -624,27 +619,30 @@ static void demo_emit_snapshot(mvd_t *mvd)
     // write layout
     if (mvd->clientNum != -1) {
         len = 2 + strlen(mvd->layout);
-        bits = (len >> 8) & 7;
-        MSG_WriteByte(mvd_unicast | (bits << SVCMD_BITS));
+        MSG_WriteByte(mvd_unicast | (len >> 8 << SVCMD_BITS));
         MSG_WriteByte(len & 255);
         MSG_WriteByte(mvd->clientNum);
         MSG_WriteByte(svc_layout);
         MSG_WriteString(mvd->layout);
     }
 
-    snap = MVD_Malloc(sizeof(*snap) + msg_write.cursize - 1);
-    snap->framenum = mvd->framenum;
-    snap->filepos = pos;
-    snap->msglen = msg_write.cursize;
-    memcpy(snap->data, msg_write.data, msg_write.cursize);
+    if (msg_write.overflowed) {
+        Com_WPrintf("%s: message buffer overflowed\n", __func__);
+    } else {
+        snap = MVD_Malloc(sizeof(*snap) + msg_write.cursize - 1);
+        snap->framenum = mvd->framenum;
+        snap->filepos = pos;
+        snap->msglen = msg_write.cursize;
+        memcpy(snap->data, msg_write.data, msg_write.cursize);
 
-    if (!mvd->snapshots)
-        mvd->snapshots = MVD_Malloc(sizeof(snap) * MIN_SNAPSHOTS);
-    else
-        mvd->snapshots = Z_Realloc(mvd->snapshots, sizeof(snap) * ALIGN(mvd->numsnapshots + 1, MIN_SNAPSHOTS));
-    mvd->snapshots[mvd->numsnapshots++] = snap;
+        if (!mvd->snapshots)
+            mvd->snapshots = MVD_Malloc(sizeof(mvd->snapshots[0]) * MIN_SNAPSHOTS);
+        else
+            mvd->snapshots = Z_Realloc(mvd->snapshots, sizeof(mvd->snapshots[0]) * Q_ALIGN(mvd->numsnapshots + 1, MIN_SNAPSHOTS));
+        mvd->snapshots[mvd->numsnapshots++] = snap;
 
-    Com_DPrintf("[%d] snaplen %zu\n", mvd->framenum, msg_write.cursize);
+        Com_DPrintf("[%d] snaplen %u\n", mvd->framenum, msg_write.cursize);
+    }
 
     SZ_Clear(&msg_write);
 
@@ -1102,7 +1100,7 @@ static void send_stream_stop(gtv_t *gtv)
 #if USE_ZLIB
 static voidpf gtv_zalloc(voidpf opaque, uInt items, uInt size)
 {
-    return MVD_Malloc(items * size);
+    return MVD_Malloc((size_t)items * size);
 }
 
 static void gtv_zfree(voidpf opaque, voidpf address)
@@ -1692,13 +1690,12 @@ void MVD_Spawn(void)
 #endif
 
     // generate spawncount for Waiting Room
-    sv.spawncount = Q_rand() & 0x7fffffff;
+    sv.spawncount = Q_rand() & INT_MAX;
 
 #if USE_FPS
     // just fixed base FPS
     sv.framerate = BASE_FRAMERATE;
-    sv.frametime = BASE_FRAMETIME;
-    sv.framediv = 1;
+    sv.frametime = Com_ComputeFrametime(sv.framerate);
 #endif
 
     // set externally visible server name
@@ -1724,12 +1721,19 @@ static void list_generic(void)
         "-- ------------ -------- --- --- ---- --- ---- --------------\n");
 
     FOR_EACH_MVD(mvd) {
+        gtv_t *gtv = mvd->gtv;
+        int percent;
+
+        if (gtv && gtv->demoplayback)
+            percent = gtv->demoprogress * 100;
+        else
+            percent = FIFO_Percent(&mvd->delay);
+
         Com_Printf("%2d %-12.12s %-8.8s %3d %3d %-4.4s %3d %4u %s\n",
                    mvd->id, mvd->name, mvd->mapname,
                    List_Count(&mvd->clients), mvd->numplayers,
-                   mvd_states[mvd->state],
-                   FIFO_Percent(&mvd->delay), mvd->num_packets,
-                   mvd->gtv ? mvd->gtv->address : "<disconnected>");
+                   mvd_states[mvd->state], percent, mvd->num_packets,
+                   gtv ? gtv->address : "<disconnected>");
     }
 }
 
@@ -1789,8 +1793,7 @@ static void MVD_ListServers_f(void)
         ratio = 100;
 #if USE_ZLIB
         if (gtv->z_act && gtv->z_str.total_out) {
-            ratio = 100 * ((double)gtv->z_str.total_in /
-                           gtv->z_str.total_out);
+            ratio = gtv->z_str.total_in * 100ULL / gtv->z_str.total_out;
         }
 #endif
         Com_Printf("%2d %-12.12s %-12.12s %4u%% %7u %s\n",
@@ -1861,7 +1864,7 @@ static void emit_base_frame(mvd_t *mvd)
     // send base player states
     for (i = 0; i < mvd->maxclients; i++) {
         player = &mvd->players[i];
-        MSG_PackPlayer(&ps, &player->ps);
+        MSG_PackPlayerNew(&ps, &player->ps);
         MSG_WriteDeltaPlayerstate_Packet(NULL, &ps, i, player_flags(mvd, player));
     }
     MSG_WriteByte(CLIENTNUM_NONE);
@@ -1869,7 +1872,7 @@ static void emit_base_frame(mvd_t *mvd)
     // send base entity states
     for (i = 1; i < mvd->csr->max_edicts; i++) {
         ent = &mvd->edicts[i];
-        if (!(ent->svflags & SVF_MONSTER))
+        if (!(ent->svflags & SVF_MVD_SEEN))
             continue;   // entity never seen
         ent->s.number = i;
         MSG_PackEntity(&es, &ent->s, &ent->x);
@@ -1880,17 +1883,21 @@ static void emit_base_frame(mvd_t *mvd)
 
 static void emit_gamestate(mvd_t *mvd)
 {
-    int         i, extra;
+    int         i;
     char        *s;
     size_t      len;
 
-    // pack MVD stream flags into extra bits
-    extra = mvd->flags << SVCMD_BITS;
-
     // send the serverdata
-    MSG_WriteByte(mvd_serverdata | extra);
-    MSG_WriteLong(PROTOCOL_VERSION_MVD);
-    MSG_WriteLong(mvd->version);
+    if (mvd->version >= PROTOCOL_VERSION_MVD_EXTENDED_LIMITS_2) {
+        MSG_WriteByte(mvd_serverdata);
+        MSG_WriteLong(PROTOCOL_VERSION_MVD);
+        MSG_WriteLong(mvd->version);
+        MSG_WriteShort(mvd->flags);
+    } else {
+        MSG_WriteByte(mvd_serverdata | (mvd->flags << SVCMD_BITS));
+        MSG_WriteLong(PROTOCOL_VERSION_MVD);
+        MSG_WriteLong(mvd->version);
+    }
     MSG_WriteLong(mvd->servercount);
     MSG_WriteString(mvd->gamedir);
     MSG_WriteShort(mvd->clientNum);
@@ -1972,6 +1979,12 @@ void MVD_StreamedRecord_f(void)
     mvd->demoname = MVD_CopyString(buffer);
 
     emit_gamestate(mvd);
+
+    // check for overflow
+    if (msg_write.overflowed) {
+        ret = Q_ERR(EMSGSIZE);
+        goto fail;
+    }
 
     // write magic
     magic = MVD_MAGIC;
@@ -2203,7 +2216,7 @@ static void MVD_Skip_f(void)
         return;
     }
 
-    count = atoi(Cmd_Argv(2));
+    count = Q_atoi(Cmd_Argv(2));
     if (count < 1) {
         count = 1;
     }
@@ -2265,7 +2278,7 @@ static void MVD_Seek_f(void)
             return;
         }
 
-        clamp(percent, 0, 100);
+        percent = Q_clipf(percent, 0, 100);
         dest = gtv->demoofs + gtv->demosize * percent / 100;
 
         byte_seek = true;
@@ -2338,8 +2351,7 @@ static void MVD_Seek_f(void)
             // set player names
             MVD_SetPlayerNames(mvd);
 
-            SZ_Init(&msg_read, snap->data, snap->msglen);
-            msg_read.cursize = snap->msglen;
+            SZ_InitRead(&msg_read, snap->data, snap->msglen);
 
             MVD_ParseMessage(mvd);
             mvd->framenum = snap->framenum;
@@ -2375,12 +2387,12 @@ static void MVD_Seek_f(void)
     Com_DPrintf("[%d] after skip\n", mvd->framenum);
 
     // update dirty configstrings
-    for (i = 0; i < CS_BITMAP_LONGS; i++) {
-        if (((uint32_t *)mvd->dcs)[i] == 0)
+    for (i = 0; i < q_countof(mvd->dcs); i++) {
+        if (mvd->dcs[i] == 0)
             continue;
 
-        index = i << 5;
-        for (j = 0; j < 32; j++, index++) {
+        index = i * BC_BITS;
+        for (j = 0; j < BC_BITS; j++, index++) {
             if (Q_IsBitSet(mvd->dcs, index))
                 MVD_UpdateConfigstring(mvd, index);
         }
@@ -2412,7 +2424,7 @@ static void MVD_Seek_f(void)
     for (i = 1; i < mvd->csr->max_edicts; i++) {
         ent = &mvd->edicts[i];
 
-        if (ent->svflags & SVF_MONSTER)
+        if (ent->svflags & SVF_MVD_SEEN)
             MVD_LinkEdict(mvd, ent);
 
         if (!ent->inuse)
@@ -2458,7 +2470,7 @@ static void MVD_Control_f(void)
             Cmd_PrintHelp(options);
             return;
         case 'l':
-            loop = atoi(cmd_optarg);
+            loop = Q_atoi(cmd_optarg);
             if (loop < 0) {
                 Com_Printf("Invalid value for %s option.\n", cmd_optopt);
                 Cmd_PrintHint();
@@ -2539,7 +2551,7 @@ static void MVD_Play_f(void)
                        "Prepend slash to specify raw path.\n");
             return;
         case 'l':
-            loop = atoi(cmd_optarg);
+            loop = Q_atoi(cmd_optarg);
             if (loop < 0) {
                 Com_Printf("Invalid value for %s option.\n", cmd_optopt);
                 Cmd_PrintHint();
@@ -2679,7 +2691,7 @@ static const cmdreg_t c_mvd[] = {
 
 static void mvd_wait_delay_changed(cvar_t *self)
 {
-    self->integer = 10 * Cvar_ClampValue(self, 0, 60 * 60);
+    self->integer = BASE_FRAMERATE * Cvar_ClampValue(self, 0, 60 * 60);
 }
 
 /*

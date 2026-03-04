@@ -55,7 +55,7 @@ static void s_underwater_gain_hf_changed(cvar_t *self)
         s_underwater_flag = false;
     }
 
-    qalFilterf(s_underwater_filter, AL_LOWPASS_GAINHF, Cvar_ClampValue(self, 0, 1));
+    qalFilterf(s_underwater_filter, AL_LOWPASS_GAINHF, Cvar_ClampValue(self, 0.001f, 1));
 }
 
 static bool AL_Init(void)
@@ -166,11 +166,14 @@ static sfxcache_t *AL_UploadSfx(sfx_t *s)
 
     qalGetError();
     qalGenBuffers(1, &buffer);
-    if (qalGetError())
+    if (qalGetError()) {
+        Com_SetLastError("Failed to generate buffer");
         goto fail;
+    }
 
     qalBufferData(buffer, format, s_info.data, size, s_info.rate);
     if (qalGetError()) {
+        Com_SetLastError("Failed to upload samples");
         qalDeleteBuffers(1, &buffer);
         goto fail;
     }
@@ -300,7 +303,7 @@ static void AL_StopAllSounds(void)
     }
 }
 
-static channel_t *AL_FindLoopingSound(int entnum, sfx_t *sfx)
+static channel_t *AL_FindLoopingSound(int entnum, const sfx_t *sfx)
 {
     int         i;
     channel_t   *ch;
@@ -398,9 +401,9 @@ static void AL_StreamStop(void)
     Q_assert(!s_stream_buffers);
 }
 
-static bool AL_NeedRawSamples(void)
+static int AL_NeedRawSamples(void)
 {
-    return s_stream_buffers < 48;
+    return s_stream_buffers < 32 ? MAX_RAW_SAMPLES : 0;
 }
 
 static bool AL_RawSamples(int samples, int rate, int width, int channels, const byte *data, float volume)

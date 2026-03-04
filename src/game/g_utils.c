@@ -72,7 +72,7 @@ findradius (origin, radius)
 edict_t *findradius(edict_t *from, vec3_t org, float rad)
 {
     vec3_t  eorg;
-    int     j;
+    vec3_t  mid;
 
     if (!from)
         from = g_edicts;
@@ -83,9 +83,9 @@ edict_t *findradius(edict_t *from, vec3_t org, float rad)
             continue;
         if (from->solid == SOLID_NOT)
             continue;
-        for (j = 0; j < 3; j++)
-            eorg[j] = org[j] - (from->s.origin[j] + (from->mins[j] + from->maxs[j]) * 0.5f);
-        if (VectorLength(eorg) > rad)
+        VectorAvg(from->mins, from->maxs, mid);
+        VectorAdd(from->s.origin, mid, eorg);
+        if (Distance(eorg, org) > rad)
             continue;
         return from;
     }
@@ -236,13 +236,12 @@ static const vec3_t MOVEDIR_DOWN = { 0,  0, -1 };
 
 void G_SetMovedir(vec3_t angles, vec3_t movedir)
 {
-    if (VectorCompare(angles, VEC_UP)) {
+    if (VectorCompare(angles, VEC_UP))
         VectorCopy(MOVEDIR_UP, movedir);
-    } else if (VectorCompare(angles, VEC_DOWN)) {
+    else if (VectorCompare(angles, VEC_DOWN))
         VectorCopy(MOVEDIR_DOWN, movedir);
-    } else {
+    else
         AngleVectors(angles, movedir, NULL, NULL);
-    }
 
     VectorClear(angles);
 }
@@ -258,7 +257,7 @@ float vectoyaw(vec3_t vec)
         else if (vec[YAW] < 0)
             yaw = -90;
     } else {
-        yaw = (int)RAD2DEG(atan2(vec[YAW], vec[PITCH]));
+        yaw = (int)RAD2DEG(atan2f(vec[YAW], vec[PITCH]));
         if (yaw < 0)
             yaw += 360;
     }
@@ -279,7 +278,7 @@ void vectoangles(vec3_t value1, vec3_t angles)
             pitch = 270;
     } else {
         if (value1[0])
-            yaw = (int)RAD2DEG(atan2(value1[1], value1[0]));
+            yaw = (int)RAD2DEG(atan2f(value1[1], value1[0]));
         else if (value1[1] > 0)
             yaw = 90;
         else
@@ -288,7 +287,7 @@ void vectoangles(vec3_t value1, vec3_t angles)
             yaw += 360;
 
         forward = sqrtf(value1[0] * value1[0] + value1[1] * value1[1]);
-        pitch = (int)RAD2DEG(atan2(value1[2], forward));
+        pitch = (int)RAD2DEG(atan2f(value1[2], forward));
         if (pitch < 0)
             pitch += 360;
     }
@@ -360,7 +359,7 @@ void G_FreeEdict(edict_t *ed)
 {
     gi.unlinkentity(ed);        // unlink from world
 
-    if ((ed - g_edicts) <= (maxclients->value + BODY_QUEUE_SIZE)) {
+    if ((ed - g_edicts) <= (game.maxclients + BODY_QUEUE_SIZE)) {
 //      gi.dprintf("tried to free special edict\n");
         return;
     }
@@ -380,13 +379,13 @@ G_TouchTriggers
 void G_TouchTriggers(edict_t *ent)
 {
     int         i, num;
-    edict_t     *touch[MAX_EDICTS], *hit;
+    edict_t     *touch[MAX_EDICTS_OLD], *hit;
 
     // dead things don't activate triggers!
     if ((ent->client || (ent->svflags & SVF_MONSTER)) && (ent->health <= 0))
         return;
 
-    num = gi.BoxEdicts(ent->absmin, ent->absmax, touch, MAX_EDICTS, AREA_TRIGGERS);
+    num = gi.BoxEdicts(ent->absmin, ent->absmax, touch, q_countof(touch), AREA_TRIGGERS);
 
     // be careful, it is possible to have an entity in this
     // list removed before we get to it (killtriggered)
@@ -397,34 +396,6 @@ void G_TouchTriggers(edict_t *ent)
         if (!hit->touch)
             continue;
         hit->touch(hit, ent, NULL, NULL);
-    }
-}
-
-/*
-============
-G_TouchSolids
-
-Call after linking a new trigger in during gameplay
-to force all entities it covers to immediately touch it
-============
-*/
-void G_TouchSolids(edict_t *ent)
-{
-    int         i, num;
-    edict_t     *touch[MAX_EDICTS], *hit;
-
-    num = gi.BoxEdicts(ent->absmin, ent->absmax, touch, MAX_EDICTS, AREA_SOLID);
-
-    // be careful, it is possible to have an entity in this
-    // list removed before we get to it (killtriggered)
-    for (i = 0; i < num; i++) {
-        hit = touch[i];
-        if (!hit->inuse)
-            continue;
-        if (ent->touch)
-            ent->touch(hit, ent, NULL, NULL);
-        if (!ent->inuse)
-            break;
     }
 }
 

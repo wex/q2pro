@@ -233,13 +233,36 @@ void CL_RegisterBspModels(void)
             Com_Error(ERR_DROP, "Couldn't load %s: %s", name, BSP_ErrorString(ret));
     }
 
-    if (cl.bsp->checksum != atoi(cl.configstrings[cl.csr.mapchecksum])) {
+    if (cl.bsp->checksum != Q_atoi(cl.configstrings[cl.csr.mapchecksum])) {
         if (cls.demo.playback) {
             Com_WPrintf("Local map version differs from demo: %i != %s\n",
                 cl.bsp->checksum, cl.configstrings[CS_MAPCHECKSUM]);
         } else {
-            Com_Error(ERR_DROP, "Local map version differs from server: %i != %s\nRecommend removing %s locally and reconnecting",
-                cl.bsp->checksum, cl.configstrings[CS_MAPCHECKSUM], cl.bsp->name);
+            if (CL_MapRetryAttempted()) {
+                // We already tried to re-download, still wrong - server issue
+                Com_Error(ERR_DROP,
+                    "==== MAP VERSION MISMATCH ====\n"
+                    "Local:  %i\n"
+                    "Server: %s\n"
+                    "Map: %s\n\n"
+                    "Client attempted re-download but checksum still mismatched.\n"
+                    "Server is running a different map version than available for download.\n"
+                    "Contact server admin to update map files.\n",
+                    cl.bsp->checksum,
+                    cl.configstrings[CS_MAPCHECKSUM],
+                    cl.bsp->name);
+            } else {
+                // First attempt, suggest manual fix
+                Com_Error(ERR_DROP,
+                    "==== MAP VERSION MISMATCH ====\n"
+                    "Local:  %i\n"
+                    "Server: %s\n"
+                    "Map: %s\n\n"
+                    "To fix: Delete local map and reconnect to re-download.\n",
+                    cl.bsp->checksum,
+                    cl.configstrings[CS_MAPCHECKSUM],
+                    cl.bsp->name);
+            }
         }
     }
 
@@ -308,7 +331,7 @@ void CL_SetSky(void)
     if (cl.csr.extended)
         sscanf(cl.configstrings[CS_SKYROTATE], "%f %d", &rotate, &autorotate);
     else
-        rotate = atof(cl.configstrings[CS_SKYROTATE]);
+        rotate = Q_atof(cl.configstrings[CS_SKYROTATE]);
 
     if (sscanf(cl.configstrings[CS_SKYAXIS], "%f %f %f",
                &axis[0], &axis[1], &axis[2]) != 3) {
@@ -331,8 +354,12 @@ static qhandle_t CL_RegisterImage(const char *s)
     // if it's in a subdir and has an extension, it's either a sprite or a skin
     // allow /some/pic.pcx escape syntax
     if (cl.csr.extended && *s != '/' && *s != '\\' && *COM_FileExtension(s)) {
+        if (!FS_pathcmpn(s, CONST_STR_LEN("sprites/psx_flare")))
+            return R_RegisterImage(s, IT_SPRITE, IF_DEFAULT_FLARE);
+
         if (!FS_pathcmpn(s, CONST_STR_LEN("sprites/")))
             return R_RegisterSprite(s);
+
         if (strchr(s, '/'))
             return R_RegisterSkin(s);
     }
@@ -422,12 +449,12 @@ void CL_UpdateConfigstring(int index)
     const char *s = cl.configstrings[index];
 
     if (index == cl.csr.maxclients) {
-        cl.maxclients = atoi(s);
+        cl.maxclients = Q_atoi(s);
         return;
     }
 
     if (index == cl.csr.airaccel) {
-        cl.pmp.airaccelerate = cl.pmp.qwmode || atoi(s);
+        cl.pmp.airaccelerate = cl.pmp.qwmode || Q_atoi(s);
         return;
     }
 
