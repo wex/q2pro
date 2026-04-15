@@ -99,8 +99,8 @@ export class Netchan {
     }
     writer.writeLong(w2 | 0);
 
-    // protocol 34: 16-bit qport from client
-    writer.writeShort(this.qport & 0xffff);
+    // protocol 34: 16-bit qport from client (unsigned)
+    writer.writeWord(this.qport & 0xffff);
 
     // copy reliable data first
     if (sendReliable) {
