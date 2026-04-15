@@ -41,6 +41,20 @@ export class Q2Client extends EventEmitter {
   private challenge = 0;
   private qport: number;
 
+  // fake cvar table for expanding $cvar tokens in stufftext
+  private cvars: Map<string, string> = new Map([
+    ['version', 'ts-aQtion-1.0.0'],
+    ['actoken', ''],
+    ['vid_ref', 'gl'],
+    ['gl_modulate', '1.0'],
+    ['gl_lockpvs', '0'],
+    ['gl_clear', '0'],
+    ['gl_dynamic', '2'],
+    ['gl_brightness', '0.1'],
+    ['gl_driver', ''],
+    ['stat_mode', ''],
+  ]);
+
   // game state
   private spawncount = 0;
   private clientnum = -1;
@@ -189,9 +203,14 @@ export class Q2Client extends EventEmitter {
       return;
     }
 
-    // send keepalive move packets when active
-    if (this.state === ConnState.Active && this.netchan) {
-      this.sendMovePacket();
+    // send packets to keep netchan flowing (acks allow server to send more reliable data)
+    if (this.netchan && this.state >= ConnState.Connected) {
+      if (this.state === ConnState.Active) {
+        this.sendMovePacket();
+      } else {
+        // send empty netchan packet as keepalive/ack during loading
+        this.netchan.transmit();
+      }
     }
   }
 
@@ -403,11 +422,20 @@ export class Q2Client extends EventEmitter {
     this.emit('frame', frame);
   }
 
+  /** Expand $cvar_name tokens using the fake cvar table. */
+  private expandCvars(text: string): string {
+    return text.replace(/\$(\w+)/g, (match, name) => {
+      const val = this.cvars.get(name);
+      return val !== undefined ? val : match;
+    });
+  }
+
   private handleStuffText(text: string): void {
     const cmds = text.trim().split('\n').filter(s => s.length > 0);
     for (const cmd of cmds) {
       console.log(`STUFF>>> ${cmd}`);
       const parts = cmd.trim().split(/\s+/);
+
       if (parts[0] === 'precache') {
         // server wants us to precache; we respond with begin
         this.state = ConnState.Precached;
@@ -415,16 +443,20 @@ export class Q2Client extends EventEmitter {
         this.sendStringCmd(`begin ${this.spawncount}`);
         if (this.netchan) this.netchan.transmit();
       } else if (parts[0] === 'cmd') {
-        // execute as string command to server, expanding known cvars
-        let serverCmd = parts.slice(1).join(' ');
-        serverCmd = serverCmd.replace('$version', '"ts-aQtion-1.0.0"');
-        serverCmd = serverCmd.replace('$actoken', '""');
-        console.log(`<<<STUFF ${serverCmd}`);
+        // 'cmd' prefix: strip it, expand cvars, send rest as stringcmd
+        const serverCmd = this.expandCvars(parts.slice(1).join(' '));
+        console.log(`<<<CMD ${serverCmd}`);
         this.sendStringCmd(serverCmd);
         if (this.netchan) this.netchan.transmit();
       } else if (parts[0] === 'reconnect') {
         this.emit('log', 'Stufftext reconnect');
         this.sendStringCmd('new');
+        if (this.netchan) this.netchan.transmit();
+      } else {
+        // unrecognized command: expand cvars and forward as stringcmd
+        const expanded = this.expandCvars(cmd.trim());
+        console.log(`<<<FWD ${expanded}`);
+        this.sendStringCmd(expanded);
         if (this.netchan) this.netchan.transmit();
       }
     }
