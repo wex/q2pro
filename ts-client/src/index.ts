@@ -1,5 +1,5 @@
 import { Q2Client } from './client.js';
-import { ConnState, PrintLevel } from './protocol.js';
+import { ConnState, PrintLevel, ServerFrame } from './protocol.js';
 import readline from 'node:readline';
 
 const args = process.argv.slice(2);
@@ -56,12 +56,13 @@ client.on('active', () => {
   console.log('[Q2] Type messages to chat, or /cmd to send commands. Ctrl+C to quit.');
 });
 
-client.on('frame', (frame: { number: number }) => {
+client.on('frame', (frame: ServerFrame) => {
   // periodic status (every 100 frames)
   if (frame.number % 100 === 0) {
     const ps = client.currentPlayerState;
     const origin = ps.pmove.origin.map(v => (v / 8).toFixed(1));
     console.log(`[FRAME ${frame.number}] pos=(${origin.join(', ')})`);
+    console.log(JSON.stringify(frame));
   }
 });
 
