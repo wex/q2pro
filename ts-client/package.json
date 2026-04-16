@@ -2,6 +2,7 @@
   "name": "q2-ts-client",
   "version": "1.0.0",
   "description": "Quake 2 protocol 34 client implementation in TypeScript",
+  "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

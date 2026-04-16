@@ -1,5 +1,6 @@
 import { Q2Client } from './client.js';
 import { ConnState, PrintLevel, ServerFrame } from './protocol.js';
+import { SseServer } from './sse-server.js';
 import readline from 'node:readline';
 
 const args = process.argv.slice(2);
@@ -11,6 +12,7 @@ if (args.length === 0) {
 }
 
 const [hostPort, playerName] = args;
+const ssePort = parseInt(process.env['SSE_PORT'] ?? args[2] ?? '8888', 10);
 let host: string;
 let port: number;
 
@@ -22,6 +24,11 @@ if (hostPort.includes(':')) {
   host = hostPort;
   port = 27910;
 }
+
+const sseServer = new SseServer(ssePort);
+await sseServer.start();
+
+const playersMap = new Map<number, { slot: number; entityNum: number; info: string }>();
 
 const client = new Q2Client({
   host,
@@ -49,6 +56,8 @@ client.on('stufftext', (text: string) => {
 
 client.on('serverdata', (data: { levelname: string; gamedir: string; clientnum: number }) => {
   console.log(`[MAP] ${data.levelname} (gamedir: ${data.gamedir}, slot: ${data.clientnum})`);
+  playersMap.clear();
+  sseServer.updateContext({ levelname: data.levelname, gamedir: data.gamedir, clientnum: data.clientnum, players: [] });
 });
 
 client.on('active', () => {
@@ -59,6 +68,8 @@ client.on('active', () => {
 client.on('frame', (frame: ServerFrame) => {
   // periodic status (every 10 frames = 1.0s)
   if (frame.number % 10 === 0) {
+    sseServer.broadcast('frame', { frame, context: sseServer.currentContext });
+
     const ps = client.currentPlayerState;
     const origin = ps.pmove.origin.map(v => (v / 8).toFixed(1));
     console.log(`[FRAME ${frame.number}] pos=(${origin.join(', ')})`);
@@ -79,10 +90,16 @@ client.on('frame', (frame: ServerFrame) => {
 
 client.on('configstring', (idx, val) => {
   // CS_PLAYERINFOS = 544, one per client slot (up to 256)
-  if (idx >= 544 && idx < 544 + 256 && val !== '') {
+  if (idx >= 544 && idx < 544 + 256) {
     const slot = idx - 544; // 0-based slot
     const entityNum = slot + 1; // entity number for this player
-    console.log(`Player slot ${slot} (entity #${entityNum}): ${val}`);
+    if (val !== '') {
+      playersMap.set(slot, { slot, entityNum, info: val });
+      console.log(`Player slot ${slot} (entity #${entityNum}): ${val}`);
+    } else {
+      playersMap.delete(slot);
+    }
+    sseServer.updateContext({ players: Array.from(playersMap.values()) });
   }
 });
 
