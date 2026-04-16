@@ -10,14 +10,17 @@ import {
 
 const args = process.argv.slice(2);
 if (args.length === 0) {
-  console.error('Usage: npx tsx src/map-render.ts <file.bsp> [output.svg]');
+  console.error('Usage: npx tsx src/map-render.ts <file.bsp> [output.svg] [--grid]');
   console.error('');
   console.error('Generates a 2D top-down SVG overview of a Quake 2 map.');
+  console.error('  --grid   overlay a 64-unit coordinate grid aligned to the world origin');
   process.exit(1);
 }
 
-const bspPath = args[0];
-const outPath = args[1] ?? (path.basename(bspPath, path.extname(bspPath)) + '.svg');
+const showGrid = args.includes('--grid');
+const positional = args.filter(a => !a.startsWith('--'));
+const bspPath = positional[0];
+const outPath = positional[1] ?? (path.basename(bspPath, path.extname(bspPath)) + '.svg');
 
 console.log(`Loading ${bspPath} …`);
 const bsp = BspFile.loadFile(bspPath);
@@ -168,6 +171,45 @@ console.log(`Markers : ${markers.length} entity markers`);
 
 const mapName = path.basename(bspPath, path.extname(bspPath));
 
+// ─── Coordinate grid ─────────────────────────────────────────────────────────
+//
+// Lines every 64 world units aligned to origin, drawn behind all geometry.
+
+const GRID_STEP = 64;
+const gridLines: string[] = [];
+
+// SVG Y extent of the draw area
+const gridTop = LABEL_HEIGHT + MARGIN;
+const gridBottom = LABEL_HEIGHT + MARGIN + worldH;
+const gridLeft = MARGIN;
+const gridRight = MARGIN + worldW;
+
+// Vertical lines (constant world X)
+const xFirst = Math.ceil(world.mins.x / GRID_STEP) * GRID_STEP;
+const xLast = Math.floor(world.maxs.x / GRID_STEP) * GRID_STEP;
+for (let wx = xFirst; wx <= xLast; wx += GRID_STEP) {
+  const [sx] = toSvg(wx, 0);
+  const isAxis = wx === 0;
+  gridLines.push(
+    `  <line x1="${sx.toFixed(1)}" y1="${gridTop}" x2="${sx.toFixed(1)}" y2="${gridBottom}"` +
+    ` stroke="rgb(0,255,0)" stroke-width="${isAxis ? 1 : 0.5}" opacity="${isAxis ? 0.9 : 0.9}"/>`,
+  );
+}
+
+// Horizontal lines (constant world Y — remember Y is flipped in SVG)
+const yFirst = Math.ceil(world.mins.y / GRID_STEP) * GRID_STEP;
+const yLast = Math.floor(world.maxs.y / GRID_STEP) * GRID_STEP;
+for (let wy = yFirst; wy <= yLast; wy += GRID_STEP) {
+  const [, sy] = toSvg(0, wy);
+  const isAxis = wy === 0;
+  gridLines.push(
+    `  <line x1="${gridLeft}" y1="${sy.toFixed(1)}" x2="${gridRight}" y2="${sy.toFixed(1)}"` +
+    ` stroke="rgb(0,255,0)" stroke-width="${isAxis ? 1 : 0.5}" opacity="${isAxis ? 0.9 : 0.9}"/>`,
+  );
+}
+
+const gridElems = showGrid ? gridLines.join('\n') : '';
+
 // Build face polygon elements
 const polyElems = polys.map(p => {
   const d = p.points
@@ -225,6 +267,9 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
 
   <!-- World geometry -->
 ${polyElems}
+
+${showGrid ? '  <!-- Coordinate grid (64-unit steps, world origin) -->' : ''}
+${gridElems}
 
   <!-- Entity markers -->
 ${markerElems}

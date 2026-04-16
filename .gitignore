@@ -12,3 +12,6 @@ clang-build.sh
 /dev
 .DS_Store
 ericw-tools/
+
+/maps
+/ts-client/*.svg
