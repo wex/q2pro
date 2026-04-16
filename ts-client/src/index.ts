@@ -1,6 +1,7 @@
 import { Q2Client } from './client.js';
 import { ConnState, PrintLevel, ServerFrame } from './protocol.js';
 import { SseServer } from './sse-server.js';
+import { MapServer } from './map-server.js';
 import readline from 'node:readline';
 
 const args = process.argv.slice(2);
@@ -27,6 +28,10 @@ if (hostPort.includes(':')) {
 
 const sseServer = new SseServer(ssePort);
 await sseServer.start();
+
+const mapPort = parseInt(process.env['MAP_PORT'] ?? '9999', 10);
+const mapServer = new MapServer(mapPort);
+await mapServer.start();
 
 const playersMap = new Map<number, { slot: number; entityNum: number; info: string }>();
 
