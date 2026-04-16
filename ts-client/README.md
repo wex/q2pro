@@ -63,17 +63,83 @@ client.on('frame', (frame) => {
 client.connect();
 ```
 
+## BSP Map Parser
+
+Parse any Quake 2 `.bsp` file (IBSP v38, standard or QBSP extended format):
+
+```typescript
+import { BspFile, SURF_SKY, SURF_WARP } from './bsp.js';
+
+const bsp = BspFile.loadFile('maps/q2dm1.bsp');
+
+const world = bsp.getWorldModel();
+console.log(`World bounds: ${JSON.stringify(world.mins)} – ${JSON.stringify(world.maxs)}`);
+
+// Walk faces of the world model
+for (let fi = world.firstface; fi < world.firstface + world.numfaces; fi++) {
+  const face   = bsp.faces[fi];
+  const ti     = bsp.texinfo[face.texinfo];
+  const normal = bsp.getFaceNormal(fi);
+  const verts  = bsp.getFacePolygon(fi); // Vec3[]
+
+  if (ti.flags & SURF_SKY)  console.log('sky face');
+  if (ti.flags & SURF_WARP) console.log('liquid face:', ti.name);
+  console.log(`  ${verts.length} verts, normal=(${normal.x.toFixed(2)}, ${normal.y.toFixed(2)}, ${normal.z.toFixed(2)})`);
+}
+
+// Entity key/value pairs
+for (const ent of bsp.parseEntities()) {
+  console.log(ent['classname'], ent['origin']);
+}
+```
+
+## 2D Map Renderer (top-down / skybox view)
+
+Generates a top-down SVG overview of the map geometry:
+
+```bash
+npx tsx src/map-render.ts <file.bsp> [output.svg]
+```
+
+**Examples:**
+
+```bash
+# Render q2dm1 to q2dm1.svg
+npx tsx src/map-render.ts ~/.q2pro/baseq2/maps/q2dm1.bsp
+
+# Specify output path
+npx tsx src/map-render.ts maps/q2dm1.bsp /tmp/q2dm1-overview.svg
+```
+
+Open the resulting `.svg` in any web browser.
+
+**Colour coding:**
+
+| Colour | Surface type |
+|--------|-------------|
+| Light grey | Floor (normal pointing up) |
+| Medium grey | Wall (vertical surface) |
+| Dark grey | Ceiling |
+| Sky blue | Sky texture |
+| Blue | Water / liquid |
+| Green | Translucent (glass, grates) |
+| Red circle | Player spawn point |
+
+The projection is: `svgX = worldX`, `svgY = −worldY` so north faces upward on screen.
+
 ## Architecture
 
 ```
 src/
-├── index.ts      — CLI entry point
+├── index.ts      — CLI entry point (network client)
 ├── client.ts     — Q2Client class (connection state machine, event emitter)
 ├── netchan.ts    — NETCHAN_OLD sequenced reliable datagram layer
 ├── parse.ts      — Server message parser (svc_* opcodes, delta decoding)
 ├── buffer.ts     — Little-endian binary BufferReader / BufferWriter
 ├── crc.ts        — COM_BlockSequenceCRCByte (move command checksum)
-└── protocol.ts   — Constants, enums, and type definitions
+├── protocol.ts   — Constants, enums, and type definitions
+├── bsp.ts        — Quake 2 BSP file parser (IBSP v38 / QBSP extended)
+└── map-render.ts — 2D top-down SVG renderer CLI
 ```
 
 ## Protocol Coverage
