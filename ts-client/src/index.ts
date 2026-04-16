@@ -71,9 +71,11 @@ client.on('active', () => {
 });
 
 client.on('frame', (frame: ServerFrame) => {
+
+  sseServer.broadcast('frame', { frame, context: sseServer.currentContext });
+
   // periodic status (every 10 frames = 1.0s)
   if (frame.number % 10 === 0) {
-    sseServer.broadcast('frame', { frame, context: sseServer.currentContext });
 
     const ps = client.currentPlayerState;
     const origin = ps.pmove.origin.map(v => (v / 8).toFixed(1));

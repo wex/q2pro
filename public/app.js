@@ -65,13 +65,14 @@ function render() {
 
     ctx.drawImage(mapImg, 0, 0, svgW, svgH);
 
-    const r = 8;
+    const r = 16;
     const fontSize = Math.max(8, r * 1.4);
     ctx.font = `bold ${fontSize}px monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
     for (const ent of entities) {
+        if (ent.number > 16) break;
         const [sx, sy] = worldToSvg(ent.origin[0], ent.origin[1]);
 
         ctx.beginPath();
@@ -84,6 +85,29 @@ function render() {
 
         ctx.fillStyle = '#fff';
         ctx.fillText(String(ent.number), sx, sy);
+
+        const yaw = ent.angles[1];
+        const ca = -yaw * (Math.PI / 180);
+        const lineLen = r * 1.8;
+        const tipX = sx + Math.cos(ca) * lineLen;
+        const tipY = sy + Math.sin(ca) * lineLen;
+
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(tipX, tipY);
+        ctx.strokeStyle = 'rgba(255, 220, 50, 0.95)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        const headLen = r * 0.7;
+        const headAngle = 0.45;
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(tipX - headLen * Math.cos(ca - headAngle), tipY - headLen * Math.sin(ca - headAngle));
+        ctx.lineTo(tipX - headLen * Math.cos(ca + headAngle), tipY - headLen * Math.sin(ca + headAngle));
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(255, 220, 50, 0.95)';
+        ctx.fill();
     }
 
     ctx.restore();
