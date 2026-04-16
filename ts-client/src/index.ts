@@ -57,12 +57,32 @@ client.on('active', () => {
 });
 
 client.on('frame', (frame: ServerFrame) => {
-  // periodic status (every 100 frames)
-  if (frame.number % 100 === 0) {
+  // periodic status (every 10 frames = 1.0s)
+  if (frame.number % 10 === 0) {
     const ps = client.currentPlayerState;
     const origin = ps.pmove.origin.map(v => (v / 8).toFixed(1));
     console.log(`[FRAME ${frame.number}] pos=(${origin.join(', ')})`);
-    console.log(JSON.stringify(frame));
+    //console.log(JSON.stringify(frame));
+
+    // Other players / entities
+    for (const ent of frame.entities) {
+      if (ent.number > 12) break;
+      // ent.origin is already in world coordinates (readCoord handles scaling)
+      // ent.number 1..maxclients = player slots
+      // ent.modelindex > 0 means the entity is visible/active
+      if (ent.modelindex > 0) {
+        console.log(`Entity #${ent.number} at`, ent.origin);
+      }
+    }
+  }
+});
+
+client.on('configstring', (idx, val) => {
+  // CS_PLAYERINFOS = 544, one per client slot (up to 256)
+  if (idx >= 544 && idx < 544 + 256 && val !== '') {
+    const slot = idx - 544; // 0-based slot
+    const entityNum = slot + 1; // entity number for this player
+    console.log(`Player slot ${slot} (entity #${entityNum}): ${val}`);
   }
 });
 
