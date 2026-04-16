@@ -239,18 +239,6 @@ const compassSvg = `
     <text y="${-compassR - 4}" text-anchor="middle" font-size="9" fill="#cc3333" font-family="sans-serif" font-weight="bold">N</text>
   </g>`;
 
-// Scale bar
-const scaleBarWorldUnits = Math.pow(10, Math.floor(Math.log10(worldW / 4)));
-const scaleBarPx = scaleBarWorldUnits * scale;
-const sbX = MARGIN;
-const sbY = SVG_H - MARGIN / 2;
-const scaleBarSvg = `
-  <g>
-    <line x1="${sbX}" y1="${sbY}" x2="${sbX + scaleBarPx}" y2="${sbY}" stroke="#aaa" stroke-width="2"/>
-    <line x1="${sbX}" y1="${sbY - 4}" x2="${sbX}" y2="${sbY + 4}" stroke="#aaa" stroke-width="1.5"/>
-    <line x1="${sbX + scaleBarPx}" y1="${sbY - 4}" x2="${sbX + scaleBarPx}" y2="${sbY + 4}" stroke="#aaa" stroke-width="1.5"/>
-    <text x="${sbX + scaleBarPx / 2}" y="${sbY - 7}" text-anchor="middle" font-size="10" fill="#aaa" font-family="monospace">${scaleBarWorldUnits} units</text>
-  </g>`;
 
 const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg"
@@ -277,8 +265,6 @@ ${markerElems}
   <!-- Compass -->
 ${compassSvg}
 
-  <!-- Scale bar -->
-${scaleBarSvg}
 
 </svg>
 `;
