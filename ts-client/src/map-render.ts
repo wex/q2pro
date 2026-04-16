@@ -24,9 +24,9 @@ function escapeXml(s: string): string {
 export function generateMapSvg(
   bsp: BspFile,
   mapName: string,
-  options: { showGrid?: boolean } = {},
+  options: { showGrid?: boolean; showMarkers?: boolean } = {},
 ): string {
-  const { showGrid = false } = options;
+  const { showGrid = false, showMarkers = false } = options;
 
   const world = bsp.getWorldModel();
 
@@ -124,7 +124,7 @@ export function generateMapSvg(
   // Sort ascending by Z so lower floors render first (painter's algorithm)
   polys.sort((a, b) => a.avgZ - b.avgZ);
 
-  // ─── Entity markers ───────────────────────────────────────────────────────────────────
+  // ─── Entity markers ───────────────────────────────────────────────────────
 
   interface EntityMarker {
     cx: number;
@@ -195,20 +195,19 @@ export function generateMapSvg(
 
   const gridElems = showGrid ? gridLines.join('\n') : '';
 
+  const markerElems = showMarkers ? markers.map(m => {
+    const labelEl = m.label
+      ? `<text x="${m.cx.toFixed(1)}" y="${(m.cy + 4).toFixed(1)}" font-size="10" text-anchor="middle" fill="white" font-family="sans-serif" font-weight="bold">${m.label}</text>`
+      : '';
+    return `    <circle cx="${m.cx.toFixed(1)}" cy="${m.cy.toFixed(1)}" r="${m.r}" fill="${m.fill}" opacity="0.9"/>${labelEl}`;
+  }).join('\n') : '';
+
   // Build face polygon elements
   const polyElems = polys.map(p => {
     const d = p.points
       .map((pt, i) => `${i === 0 ? 'M' : 'L'}${pt[0].toFixed(1)},${pt[1].toFixed(1)}`)
       .join(' ') + ' Z';
     return `  <path d="${d}" fill="${p.fill}" stroke="rgba(0,0,0,0.3)" stroke-width="0.3" stroke-linejoin="round"/>`;
-  }).join('\n');
-
-  // Entity markers
-  const markerElems = markers.map(m => {
-    const labelEl = m.label
-      ? `<text x="${m.cx.toFixed(1)}" y="${(m.cy + 4).toFixed(1)}" font-size="10" text-anchor="middle" fill="white" font-family="sans-serif" font-weight="bold">${m.label}</text>`
-      : '';
-    return `  <circle cx="${m.cx.toFixed(1)}" cy="${m.cy.toFixed(1)}" r="${m.r}" fill="${m.fill}" opacity="0.9"/>${labelEl}`;
   }).join('\n');
 
   // Compass rose (top-right corner)
@@ -247,8 +246,7 @@ ${polyElems}
 ${showGrid ? '  <!-- Coordinate grid (64-unit steps, world origin) -->' : ''}
 ${gridElems}
 
-  <!-- Entity markers -->
-${markerElems}
+${showMarkers ? `  <!-- Entity markers -->\n  <g id="markers">\n${markerElems}\n  </g>` : ''}
 
   <!-- Compass -->
 ${compassSvg}
