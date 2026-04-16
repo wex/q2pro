@@ -2,8 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
   BspFile,
-  SURF_SKY, SURF_WARP, SURF_NODRAW, SURF_SKIP,
-  SURF_TRANS33, SURF_TRANS66,
+  SURF_NODRAW, SURF_SKIP,
   type Vec3,
 } from './bsp.js';
 
@@ -41,8 +40,7 @@ console.log(`Bounds  : [${fmtV(world.mins)}] – [${fmtV(world.maxs)}]`);
 //   svgX =  worldX
 //   svgY = -worldY  (north = up on screen)
 
-const SVG_W        = 2048;
-const MARGIN       = 80;
+const MARGIN = 80;
 const LABEL_HEIGHT = 40; // space at top for map name
 
 const worldW = world.maxs.x - world.mins.x;
@@ -53,10 +51,10 @@ if (worldW <= 0 || worldH <= 0) {
   process.exit(1);
 }
 
-const drawW = SVG_W - 2 * MARGIN;
-const scale  = drawW / worldW;
-const drawH  = worldH * scale;
-const SVG_H  = Math.round(drawH + 2 * MARGIN + LABEL_HEIGHT);
+// 1:1 scale — 1 world unit = 1 SVG pixel
+const scale = 1;
+const SVG_W = Math.round(worldW + 2 * MARGIN);
+const SVG_H = Math.round(worldH + 2 * MARGIN + LABEL_HEIGHT);
 
 function toSvg(worldX: number, worldY: number): [number, number] {
   return [
@@ -65,15 +63,16 @@ function toSvg(worldX: number, worldY: number): [number, number] {
   ];
 }
 
-// ─── Face categorisation ──────────────────────────────────────────────────────
+// ─── Face collection (first pass) ────────────────────────────────────────────
+//
+// From a top-down skybox view only upward-facing surfaces are visible:
+// keep faces whose normal Z component is positive (nz > 0).
+// Fill colour is determined in a second pass once global min/max Z is known.
 
 interface PolyRecord {
   points: [number, number][];
-  fill: string;
-  strokeColor: string;
-  strokeWidth: number;
-  opacity: number;
-  layer: number; // draw order: lower = behind
+  avgZ: number;     // average vertex Z — used for height colouring & sort
+  fill: string;     // assigned after global min/max pass
 }
 
 const polys: PolyRecord[] = [];
@@ -82,67 +81,24 @@ function processFaces(firstface: number, numfaces: number): void {
   for (let fi = firstface; fi < firstface + numfaces; fi++) {
     const face = bsp.faces[fi];
     if (face.texinfo >= bsp.texinfo.length) continue;
-    const ti  = bsp.texinfo[face.texinfo];
+    const ti = bsp.texinfo[face.texinfo];
 
-    // Skip purely invisible surfaces
+    // Skip invisible / hint surfaces
     if (ti.flags & (SURF_NODRAW | SURF_SKIP)) continue;
+
+    // Visibility filter: only surfaces whose normal points upward are
+    // visible from above (skybox / top-down camera).
+    const n = bsp.getFaceNormal(fi);
+    if (n.z <= 0) continue;
 
     // Resolve polygon vertices
     const verts = bsp.getFacePolygon(fi);
     if (verts.length < 3) continue;
 
     const pts = verts.map(v => toSvg(v.x, v.y));
+    const avgZ = verts.reduce((s, v) => s + v.z, 0) / verts.length;
 
-    // Face normal (accounts for DSURF_PLANEBACK)
-    const n = bsp.getFaceNormal(fi);
-
-    // ── Classify & colour ────────────────────────────────────────────────────
-    let fill: string;
-    let strokeColor = '#2a2a22';
-    let strokeWidth = 0.4;
-    let opacity: number;
-    let layer: number;
-
-    if (ti.flags & SURF_SKY) {
-      // Sky / open ceiling
-      fill        = '#7aaec8';
-      opacity     = 0.55;
-      layer       = 0;
-      strokeWidth = 0;
-    } else if (ti.flags & SURF_WARP) {
-      // Liquid (water, slime, lava)
-      const isLava  = ti.name.toLowerCase().includes('lava');
-      const isSlime = ti.name.toLowerCase().includes('slime');
-      fill    = isLava ? '#cc5500' : isSlime ? '#55aa44' : '#3377cc';
-      opacity = 0.70;
-      layer   = 2;
-    } else if (ti.flags & (SURF_TRANS33 | SURF_TRANS66)) {
-      // Translucent surface (glass, grate)
-      fill    = '#99ccaa';
-      opacity = 0.35;
-      layer   = 2;
-    } else if (n.z > 0.7) {
-      // Floor — the primary visible surface from above
-      fill        = '#d8d3cb';
-      strokeColor = '#b0a898';
-      strokeWidth = 0.3;
-      opacity     = 1.0;
-      layer       = 4;
-    } else if (n.z < -0.7) {
-      // Ceiling — visible from above but behind floors
-      fill    = '#b8b2a8';
-      opacity = 0.45;
-      layer   = 1;
-    } else {
-      // Wall — vertical geometry, gives the map its outline
-      fill        = '#8a8880';
-      strokeColor = '#3a3830';
-      strokeWidth = 0.5;
-      opacity     = 0.75;
-      layer       = 3;
-    }
-
-    polys.push({ points: pts, fill, strokeColor, strokeWidth, opacity, layer });
+    polys.push({ points: pts, avgZ, fill: '' }); // fill assigned below
   }
 }
 
@@ -155,10 +111,26 @@ for (let mi = 1; mi < bsp.models.length; mi++) {
   processFaces(m.firstface, m.numfaces);
 }
 
-// Sort: lower layer drawn first (underneath)
-polys.sort((a, b) => a.layer - b.layer);
+// ─── Second pass: assign grayscale fill by height ────────────────────────────
+//
+// black rgb(0,0,0) = lowest Z   white rgb(255,255,255) = highest Z
 
-console.log(`Polygons: ${polys.length}`);
+let minZ = Infinity, maxZ = -Infinity;
+for (const p of polys) {
+  if (p.avgZ < minZ) minZ = p.avgZ;
+  if (p.avgZ > maxZ) maxZ = p.avgZ;
+}
+
+const zRange = maxZ - minZ || 1; // guard against flat maps
+for (const p of polys) {
+  const v = Math.round(((p.avgZ - minZ) / zRange) * 255);
+  p.fill = `rgb(${v},${v},${v})`;
+}
+
+// Sort ascending by Z so lower floors render first (painter's algorithm)
+polys.sort((a, b) => a.avgZ - b.avgZ);
+
+console.log(`Polygons: ${polys.length}  Z range: ${minZ.toFixed(0)} – ${maxZ.toFixed(0)}`);
 
 // ─── Entity markers ───────────────────────────────────────────────────────────
 
@@ -174,7 +146,7 @@ const markers: EntityMarker[] = [];
 
 const entities = bsp.parseEntities();
 for (const ent of entities) {
-  const cls    = ent['classname'] ?? '';
+  const cls = ent['classname'] ?? '';
   const origin = parseOrigin(ent['origin']);
   if (!origin) continue;
   const [cx, cy] = toSvg(origin.x, origin.y);
@@ -196,15 +168,12 @@ console.log(`Markers : ${markers.length} entity markers`);
 
 const mapName = path.basename(bspPath, path.extname(bspPath));
 
-// Build face polygon elements grouped by layer
+// Build face polygon elements
 const polyElems = polys.map(p => {
   const d = p.points
     .map((pt, i) => `${i === 0 ? 'M' : 'L'}${pt[0].toFixed(1)},${pt[1].toFixed(1)}`)
     .join(' ') + ' Z';
-  const stroke = p.strokeWidth > 0
-    ? `stroke="${p.strokeColor}" stroke-width="${p.strokeWidth}"`
-    : 'stroke="none"';
-  return `  <path d="${d}" fill="${p.fill}" ${stroke} opacity="${p.opacity}" stroke-linejoin="round"/>`;
+  return `  <path d="${d}" fill="${p.fill}" stroke="rgba(0,0,0,0.3)" stroke-width="0.3" stroke-linejoin="round"/>`;
 }).join('\n');
 
 // Entity markers
@@ -247,7 +216,7 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
      viewBox="0 0 ${SVG_W} ${SVG_H}">
 
   <!-- Background -->
-  <rect width="${SVG_W}" height="${SVG_H}" fill="#141412"/>
+  <rect width="${SVG_W}" height="${SVG_H}" fill="#000000"/>
 
   <!-- Map name -->
   <text x="${SVG_W / 2}" y="${LABEL_HEIGHT - 8}"
