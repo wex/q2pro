@@ -228,7 +228,10 @@ export function generateMapSvg(
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg"
      width="${SVG_W}" height="${SVG_H}"
-     viewBox="0 0 ${SVG_W} ${SVG_H}">
+     viewBox="0 0 ${SVG_W} ${SVG_H}"
+     data-mins-x="${world.mins.x}" data-mins-y="${world.mins.y}"
+     data-maxs-x="${world.maxs.x}" data-maxs-y="${world.maxs.y}"
+     data-margin="${MARGIN}" data-label-height="${LABEL_HEIGHT}">
 
   <!-- Background -->
   <rect width="${SVG_W}" height="${SVG_H}" fill="#000000"/>

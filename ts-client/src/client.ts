@@ -60,6 +60,7 @@ export class Q2Client extends EventEmitter {
   private clientnum = -1;
   private gamedir = '';
   private levelname = '';
+  private mapname = '';
   private configstrings: Map<number, string> = new Map();
   private baselines: Map<number, EntityState> = new Map();
   private frames: ServerFrame[] = [];
@@ -362,6 +363,11 @@ export class Q2Client extends EventEmitter {
 
     if (cmd === 'client_connect') {
       if (this.state !== ConnState.Connecting) return;
+
+      // parse optional map= parameter
+      const mapParam = parts.find(p => p.startsWith('map='));
+      if (mapParam) this.mapname = mapParam.slice(4);
+
       this.emit('log', 'Connection accepted');
 
       // set up netchan
@@ -405,8 +411,8 @@ export class Q2Client extends EventEmitter {
     this.lastFrame = -1;
 
     this.state = ConnState.Loading;
-    this.emit('log', `Server data: map="${sd.levelname}" gamedir="${sd.gamedir}" client=${sd.clientnum}`);
-    this.emit('serverdata', sd);
+    this.emit('log', `Server data: map="${sd.levelname}" (${this.mapname}) gamedir="${sd.gamedir}" client=${sd.clientnum}`);
+    this.emit('serverdata', { ...sd, mapname: this.mapname });
   }
 
   private handleFrame(frame: ServerFrame): void {

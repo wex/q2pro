@@ -59,10 +59,10 @@ client.on('stufftext', (text: string) => {
   console.log(`[STUFF] ${text.trim()}`);
 });
 
-client.on('serverdata', (data: { levelname: string; gamedir: string; clientnum: number }) => {
-  console.log(`[MAP] ${data.levelname} (gamedir: ${data.gamedir}, slot: ${data.clientnum})`);
+client.on('serverdata', (data: { levelname: string; mapname: string; gamedir: string; clientnum: number }) => {
+  console.log(`[MAP] ${data.levelname} (${data.mapname}) gamedir: ${data.gamedir}, slot: ${data.clientnum}`);
   playersMap.clear();
-  sseServer.updateContext({ levelname: data.levelname, gamedir: data.gamedir, clientnum: data.clientnum, players: [] });
+  sseServer.updateContext({ levelname: data.levelname, mapname: data.mapname, gamedir: data.gamedir, clientnum: data.clientnum, players: [] });
 });
 
 client.on('active', () => {

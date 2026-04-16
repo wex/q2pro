@@ -3,6 +3,7 @@ import type { ServerFrame } from './protocol.js';
 
 export interface ServerContext {
   levelname: string;
+  mapname: string;
   gamedir: string;
   clientnum: number;
   players: Array<{ slot: number; entityNum: number; info: string }>;
@@ -29,6 +30,7 @@ export class SseServer {
   private readonly clients: Set<http.ServerResponse> = new Set();
   private context: ServerContext = {
     levelname: '',
+    mapname: '',
     gamedir: '',
     clientnum: -1,
     players: [],

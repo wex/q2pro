@@ -35,6 +35,7 @@ export class MapServer {
   }
 
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+    res.setHeader('Access-Control-Allow-Origin', '*');
     const url = req.url ?? '';
     const match = url.match(/^\/map\/([^/?#]+)/);
 
@@ -65,7 +66,6 @@ export class MapServer {
       const svg = generateMapSvg(bsp, mapName);
       res.writeHead(200, {
         'Content-Type': 'image/svg+xml',
-        'Access-Control-Allow-Origin': '*',
       });
       res.end(svg);
     } catch (err) {
