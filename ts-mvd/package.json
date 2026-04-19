@@ -1,0 +1,16 @@
+{
+  "name": "ts-mvd",
+  "version": "1.0.0",
+  "description": "TypeScript MVD/GTV client for Q2Pro servers",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "example": "ts-node src/example.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "ts-node": "^10.9.0",
+    "@types/node": "^20.11.0"
+  }
+}
