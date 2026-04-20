@@ -248,8 +248,8 @@ export class MvdFrameParser {
 
         // Parse configstrings
         const configstrings = new Map<number, string>();
-        const csEnd = this.extended ? 4928 : 2080;
-        while (reader.remaining > 2) {
+        const csEnd = this.extended ? 13630 : 2080;
+        while (reader.remaining >= 2) {
             const index = reader.readUInt16LE();
             if (index >= csEnd) break;
             const value = reader.readString();
@@ -320,14 +320,6 @@ export class MvdFrameParser {
                 }
             }
 
-            if (bits & PPS_REMOVE) {
-                const existing = this.playerStates.get(number);
-                if (existing) {
-                    existing.inUse = false;
-                }
-                continue;
-            }
-
             // Get or create player state
             let ps = this.playerStates.get(number);
             if (!ps) {
@@ -345,7 +337,8 @@ export class MvdFrameParser {
                 this.playerStates.set(number, ps);
             }
 
-            // Apply deltas
+            // Apply deltas — must consume all delta bytes even for
+            // PPS_REMOVE, since the wire format includes them.
             if (bits & PPS_M_TYPE) {
                 ps.pmType = reader.readUInt8();
             }
@@ -431,6 +424,11 @@ export class MvdFrameParser {
 
             if (bits & PPS_STATS) {
                 this.skipStats(reader);
+            }
+
+            if (bits & PPS_REMOVE) {
+                ps.inUse = false;
+                continue;
             }
 
             ps.inUse = true;
