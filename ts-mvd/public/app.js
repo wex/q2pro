@@ -72,7 +72,10 @@ function render() {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
+    const maxclients = parseInt(configstrings[CS_MAXCLIENTS_EXT] || configstrings[CS_MAXCLIENTS_OLD] || '0', 10);
+
     for (const ent of players) {
+        if (ent.number < 0 || ent.number >= maxclients) continue;
         const [sx, sy] = worldToSvg(ent.origin[0], ent.origin[1]);
 
         ctx.beginPath();
@@ -116,13 +119,18 @@ function render() {
 // ─── Configstring → map name ─────────────────────────────────────────────────
 // Map BSP path is at CS_MODELS+1: index 33 (old protocol) or 63 (extended).
 
+const CS_MAXCLIENTS_OLD = 30;
+const CS_MAXCLIENTS_EXT = 60;
 const CS_MODELS_OLD = 32;
 const CS_MODELS_EXT = 62;
 
 function extractMapname() {
-    const bspPath = configstrings[CS_MODELS_EXT + 1] || configstrings[CS_MODELS_OLD + 1] || '';
-    const m = bspPath.match(/^maps\/(.+)\.bsp$/);
-    return m ? m[1] : '';
+    const re = /^maps\/(.+)\.bsp$/;
+    for (const idx of [CS_MODELS_EXT + 1, CS_MODELS_OLD + 1]) {
+        const m = (configstrings[idx] || '').match(re);
+        if (m) return m[1];
+    }
+    return '';
 }
 
 function checkMapChange() {
