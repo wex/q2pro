@@ -114,6 +114,11 @@ export interface FrameEvent {
     players: ReadonlyArray<Readonly<PlayerState>>;
 }
 
+export interface ConfigStringEvent {
+    index: number;
+    value: string;
+}
+
 export interface ServerDataEvent {
     protocol: number;
     version: number;
@@ -140,6 +145,7 @@ export class MvdFrameParser {
     // Callbacks
     onFrame: ((event: FrameEvent) => void) | null = null;
     onServerData: ((event: ServerDataEvent) => void) | null = null;
+    onConfigString: ((event: ConfigStringEvent) => void) | null = null;
 
     /**
      * Feed a raw MVD stream data buffer (the payload from GTS_STREAM_DATA).
@@ -161,7 +167,7 @@ export class MvdFrameParser {
                     this.parseFrame(reader);
                     break;
                 case MvdOp.ConfigString:
-                    this.skipConfigString(reader);
+                    this.parseConfigString(reader);
                     break;
                 case MvdOp.Unicast:
                 case MvdOp.UnicastReliable:
@@ -600,9 +606,10 @@ export class MvdFrameParser {
 
     // ── Skip helpers for non-player MVD commands ────────────────────
 
-    private skipConfigString(reader: BufferReader): void {
-        reader.readUInt16LE(); // index
-        reader.readString();   // value
+    private parseConfigString(reader: BufferReader): void {
+        const index = reader.readUInt16LE();
+        const value = reader.readString();
+        this.onConfigString?.({ index, value });
     }
 
     private skipUnicast(reader: BufferReader, extrabits: number): void {
