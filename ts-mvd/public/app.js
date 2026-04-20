@@ -3,13 +3,17 @@
 const SSE_URL = '/events';
 const MAP_URL = '/maps/';
 
-const canvas = document.getElementById('map');
-const ctx = canvas.getContext('2d');
+const mapCanvas = document.getElementById('map');
+const playersCanvas = document.getElementById('players');
+const mapCtx = mapCanvas.getContext('2d');
+const playersCtx = playersCanvas.getContext('2d');
 const elConn = document.getElementById('status-conn');
 const elMap = document.getElementById('status-map');
 const elEntities = document.getElementById('status-entities');
 
-let mapImg = null;
+let mapBitmap = null;           // ImageBitmap or HTMLCanvasElement
+let mapBitmapScale = 0;         // pixels per world unit used for current bitmap
+let mapSvgBlobUrl = null;       // current SVG blob URL (for re-raster)
 let mapBounds = null;
 let currentMapname = '';
 let players = [];
@@ -17,32 +21,99 @@ let transform = { tx: 0, ty: 0, scale: 1 };
 let configstrings = {};
 let serverStatus = null;
 let statusMaxclients = 0;
+let dpr = window.devicePixelRatio || 1;
 
-// ─── Canvas sizing ──────────────────────────────────────────────────────────
+// Caches invalidated on configstring changes
+let teamMapCache = null;
+let playerInfoCache = {};
+let maxclientsCache = 0;
+
+// ─── Configstring constants / colours ────────────────────────────────────────
+
+const CS_MAXCLIENTS_OLD = 30;
+const CS_MAXCLIENTS_EXT = 60;
+const CS_MODELS_OLD = 32;
+const CS_MODELS_EXT = 62;
+const CS_PLAYERSKINS_OLD = 1312;
+const CS_PLAYERSKINS_EXT = 12862;
+
+const TEAM_COLOURS = [
+    { fill: 'rgba(220, 30, 30, 0.85)', stroke: 'rgba(255, 160, 160, 0.9)', cone: 'rgba(220, 30, 30, 0.3)', coneStroke: 'rgba(220, 30, 30, 0.6)' },
+    { fill: 'rgba(30, 100, 220, 0.85)', stroke: 'rgba(160, 190, 255, 0.9)', cone: 'rgba(30, 100, 220, 0.3)', coneStroke: 'rgba(30, 100, 220, 0.6)' },
+    { fill: 'rgba(30, 180, 60, 0.85)', stroke: 'rgba(160, 255, 170, 0.9)', cone: 'rgba(30, 180, 60, 0.3)', coneStroke: 'rgba(30, 180, 60, 0.6)' },
+];
+const DEFAULT_COLOUR = { fill: 'rgba(140, 140, 140, 0.85)', stroke: 'rgba(200, 200, 200, 0.9)', cone: 'rgba(140, 140, 140, 0.3)', coneStroke: 'rgba(140, 140, 140, 0.6)' };
+
+// ─── Dirty-flag render scheduling ────────────────────────────────────────────
+
+const MAP_DIRTY = 1;
+const PLAYERS_DIRTY = 2;
+let dirty = 0;
+let rafScheduled = false;
+
+function scheduleRender(flags) {
+    dirty |= flags;
+    if (rafScheduled) return;
+    rafScheduled = true;
+    requestAnimationFrame(renderFrame);
+}
+
+function renderFrame() {
+    rafScheduled = false;
+    const flags = dirty;
+    dirty = 0;
+    if (flags & MAP_DIRTY) renderMap();
+    if (flags & PLAYERS_DIRTY) renderPlayers();
+    maybeScheduleRaster();
+}
+
+// ─── Canvas sizing ───────────────────────────────────────────────────────────
 
 function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    if (mapImg) fitToScreen();
-    render();
+    dpr = window.devicePixelRatio || 1;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    for (const c of [mapCanvas, playersCanvas]) {
+        c.width = Math.max(1, Math.round(w * dpr));
+        c.height = Math.max(1, Math.round(h * dpr));
+        c.style.width = w + 'px';
+        c.style.height = h + 'px';
+    }
+    if (mapBounds) fitToScreen();
+    scheduleRender(MAP_DIRTY | PLAYERS_DIRTY);
 }
 
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
+// React to devicePixelRatio changes (zoom, moving between monitors).
+function watchDpr() {
+    const mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    const onChange = () => {
+        resizeCanvas();
+        // Effective scale changed → may need re-raster.
+        maybeScheduleRaster();
+        watchDpr();
+    };
+    if (mql.addEventListener) mql.addEventListener('change', onChange, { once: true });
+    else if (mql.addListener) mql.addListener(onChange);
+}
+watchDpr();
+
 // ─── Fit to screen ──────────────────────────────────────────────────────────
 
 function fitToScreen() {
     if (!mapBounds) return;
+    const cssW = window.innerWidth;
+    const cssH = window.innerHeight;
     const { svgW, svgH } = mapBounds;
-    const scale = Math.min(canvas.width / svgW, canvas.height / svgH) * 0.95;
-    const tx = (canvas.width - svgW * scale) / 2;
-    const ty = (canvas.height - svgH * scale) / 2;
+    const scale = Math.min(cssW / svgW, cssH / svgH) * 0.95;
+    const tx = (cssW - svgW * scale) / 2;
+    const ty = (cssH - svgH * scale) / 2;
     transform = { tx, ty, scale };
 }
 
 // ─── Coordinate conversion ───────────────────────────────────────────────────
-// Quake 2 world (X, Y) → SVG pixel coordinates (mirrors map-render.ts toSvg())
 
 function worldToSvg(wx, wy) {
     const { minsX, maxsY, margin, labelHeight } = mapBounds;
@@ -52,30 +123,45 @@ function worldToSvg(wx, wy) {
     ];
 }
 
-// ─── Render ──────────────────────────────────────────────────────────────────
+// ─── Shared transform ───────────────────────────────────────────────────────
 
-function render() {
-    const { width, height } = canvas;
-    ctx.clearRect(0, 0, width, height);
-
-    if (!mapImg || !mapBounds) return;
-
+function applyWorldTransform(ctx) {
     const { tx, ty, scale } = transform;
-    const { svgW, svgH } = mapBounds;
+    // Combine DPR with pan/zoom in one setTransform: device_px = (css_px) * dpr,
+    // where css_px = world * scale + (tx, ty).
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * tx, dpr * ty);
+}
 
-    ctx.save();
-    ctx.setTransform(scale, 0, 0, scale, tx, ty);
+// ─── Map layer render ────────────────────────────────────────────────────────
 
-    ctx.drawImage(mapImg, 0, 0, svgW, svgH);
+function renderMap() {
+    mapCtx.setTransform(1, 0, 0, 1, 0, 0);
+    mapCtx.clearRect(0, 0, mapCanvas.width, mapCanvas.height);
+    if (!mapBitmap || !mapBounds) return;
+    applyWorldTransform(mapCtx);
+    mapCtx.drawImage(mapBitmap, 0, 0, mapBounds.svgW, mapBounds.svgH);
+}
 
+// ─── Players layer render ────────────────────────────────────────────────────
+
+function renderPlayers() {
+    playersCtx.setTransform(1, 0, 0, 1, 0, 0);
+    playersCtx.clearRect(0, 0, playersCanvas.width, playersCanvas.height);
+    if (!mapBounds) return;
+    applyWorldTransform(playersCtx);
+
+    const ctx = playersCtx;
     const r = 16;
     const fontSize = Math.max(8, r * 1.4);
-    ctx.font = `bold ${fontSize}px monospace`;
+    const nameFontSize = Math.max(10, r * 1.6);
+    const playerFont = `bold ${fontSize}px monospace`;
+    const nameFont = `bold ${nameFontSize}px monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    ctx.font = playerFont;
 
-    const maxclients = statusMaxclients || parseInt(configstrings[CS_MAXCLIENTS_EXT] || configstrings[CS_MAXCLIENTS_OLD] || '0', 10);
-    const teamMap = buildTeamMap();
+    const maxclients = maxclientsCache;
+    const teamMap = getTeamMap();
 
     for (const ent of players) {
         if (ent.number < 0 || ent.number >= maxclients) continue;
@@ -91,16 +177,15 @@ function render() {
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        const info = parsePlayerInfo(ent.number);
+        const info = getPlayerInfo(ent.number);
         if (info.name) {
-            const nameFontSize = Math.max(10, r * 1.6);
-            ctx.font = `bold ${nameFontSize}px monospace`;
+            ctx.font = nameFont;
             ctx.fillStyle = '#fff';
             ctx.strokeStyle = '#000';
             ctx.lineWidth = 3;
             ctx.strokeText(info.name, sx, sy - r - 10);
             ctx.fillText(info.name, sx, sy - r - 10);
-            ctx.font = `bold ${fontSize}px monospace`;
+            ctx.font = playerFont;
         }
 
         const yaw = ent.viewangles[1];
@@ -126,26 +211,9 @@ function render() {
         ctx.lineWidth = 1.5;
         ctx.stroke();
     }
-
-    ctx.restore();
 }
 
-// ─── Configstring → map name ─────────────────────────────────────────────────
-// Map BSP path is at CS_MODELS+1: index 33 (old protocol) or 63 (extended).
-
-const CS_MAXCLIENTS_OLD = 30;
-const CS_MAXCLIENTS_EXT = 60;
-const CS_MODELS_OLD = 32;
-const CS_MODELS_EXT = 62;
-const CS_PLAYERSKINS_OLD = 1312;
-const CS_PLAYERSKINS_EXT = 12862;
-
-const TEAM_COLOURS = [
-    { fill: 'rgba(220, 30, 30, 0.85)', stroke: 'rgba(255, 160, 160, 0.9)', cone: 'rgba(220, 30, 30, 0.3)', coneStroke: 'rgba(220, 30, 30, 0.6)' },
-    { fill: 'rgba(30, 100, 220, 0.85)', stroke: 'rgba(160, 190, 255, 0.9)', cone: 'rgba(30, 100, 220, 0.3)', coneStroke: 'rgba(30, 100, 220, 0.6)' },
-    { fill: 'rgba(30, 180, 60, 0.85)', stroke: 'rgba(160, 255, 170, 0.9)', cone: 'rgba(30, 180, 60, 0.3)', coneStroke: 'rgba(30, 180, 60, 0.6)' },
-];
-const DEFAULT_COLOUR = { fill: 'rgba(140, 140, 140, 0.85)', stroke: 'rgba(200, 200, 200, 0.9)', cone: 'rgba(140, 140, 140, 0.3)', coneStroke: 'rgba(140, 140, 140, 0.6)' };
+// ─── Caches ──────────────────────────────────────────────────────────────────
 
 function parsePlayerInfo(playerNumber) {
     const cs =
@@ -157,10 +225,42 @@ function parsePlayerInfo(playerNumber) {
     return { name: cs.substring(0, sep), skin: cs.substring(sep + 1) };
 }
 
+function getPlayerInfo(n) {
+    if (n in playerInfoCache) return playerInfoCache[n];
+    const info = parsePlayerInfo(n);
+    playerInfoCache[n] = info;
+    return info;
+}
+
+function getTeamMap() {
+    if (teamMapCache) return teamMapCache;
+    const skinToTeam = {};
+    const teamMap = {};
+    let nextTeam = 0;
+    for (const ent of players) {
+        const info = getPlayerInfo(ent.number);
+        if (!info.skin) continue;
+        if (!(info.skin in skinToTeam)) skinToTeam[info.skin] = nextTeam++;
+        teamMap[ent.number] = skinToTeam[info.skin];
+    }
+    teamMapCache = teamMap;
+    return teamMap;
+}
+
+function recomputeMaxclients() {
+    maxclientsCache = statusMaxclients ||
+        parseInt(configstrings[CS_MAXCLIENTS_EXT] || configstrings[CS_MAXCLIENTS_OLD] || '0', 10);
+}
+
+function invalidateConfigCaches() {
+    teamMapCache = null;
+    playerInfoCache = {};
+    recomputeMaxclients();
+}
+
 function countActiveSkins() {
-    const maxclients = statusMaxclients || parseInt(configstrings[CS_MAXCLIENTS_EXT] || configstrings[CS_MAXCLIENTS_OLD] || '0', 10);
     let count = 0;
-    for (let i = 0; i < maxclients; i++) {
+    for (let i = 0; i < maxclientsCache; i++) {
         const cs = configstrings[CS_PLAYERSKINS_EXT + i] || configstrings[CS_PLAYERSKINS_OLD + i] || '';
         if (cs) count++;
     }
@@ -169,21 +269,6 @@ function countActiveSkins() {
 
 function updatePlayerCount() {
     elEntities.textContent = `${countActiveSkins()} player(s)`;
-}
-
-function buildTeamMap() {
-    const skinToTeam = {};
-    const teamMap = {};
-    let nextTeam = 0;
-    for (const ent of players) {
-        const info = parsePlayerInfo(ent.number);
-        if (!info.skin) continue;
-        if (!(info.skin in skinToTeam)) {
-            skinToTeam[info.skin] = nextTeam++;
-        }
-        teamMap[ent.number] = skinToTeam[info.skin];
-    }
-    return teamMap;
 }
 
 function extractMapname() {
@@ -201,6 +286,99 @@ function checkMapChange() {
         currentMapname = mapname;
         loadMap(currentMapname);
     }
+}
+
+// ─── SVG → bitmap rasterization (zoom-aware, debounced) ─────────────────────
+
+const RASTER_UPSCALE_TRIGGER = 1.5;           // re-raster when effScale > rasterScale * 1.5
+const RASTER_HEADROOM = 1.25;                 // raster slightly above current effScale
+const RASTER_MAX_AREA = 16 * 1024 * 1024;     // 16M px cap
+const RASTER_DEBOUNCE_MS = 140;
+
+let rasterInFlight = false;
+let rasterTimer = 0;
+let pendingRasterScale = 0;
+
+function effectiveScale() {
+    return transform.scale * dpr;
+}
+
+function clampRasterScale(s) {
+    if (!mapBounds) return s;
+    const { svgW, svgH } = mapBounds;
+    const maxScale = Math.sqrt(RASTER_MAX_AREA / Math.max(1, svgW * svgH));
+    return Math.min(s, maxScale);
+}
+
+function maybeScheduleRaster() {
+    if (!mapSvgBlobUrl || !mapBounds) return;
+    const eff = effectiveScale();
+    if (eff <= mapBitmapScale * RASTER_UPSCALE_TRIGGER) return;
+    const target = clampRasterScale(eff * RASTER_HEADROOM);
+    if (target <= mapBitmapScale * 1.01) return; // already at cap
+    pendingRasterScale = target;
+    if (rasterTimer) clearTimeout(rasterTimer);
+    rasterTimer = setTimeout(runRaster, RASTER_DEBOUNCE_MS);
+}
+
+async function runRaster() {
+    rasterTimer = 0;
+    if (rasterInFlight) return;
+    if (!mapSvgBlobUrl || !mapBounds) return;
+    const scale = pendingRasterScale;
+    if (scale <= mapBitmapScale * 1.01) return;
+
+    rasterInFlight = true;
+    const blobUrl = mapSvgBlobUrl;
+    const bounds = mapBounds;
+    try {
+        const bmp = await rasterizeSvg(blobUrl, bounds, scale);
+        // Guard: map may have changed during raster
+        if (bmp && mapSvgBlobUrl === blobUrl && mapBounds === bounds) {
+            if (mapBitmap && typeof mapBitmap.close === 'function') mapBitmap.close();
+            mapBitmap = bmp;
+            mapBitmapScale = scale;
+            scheduleRender(MAP_DIRTY);
+        } else if (bmp && typeof bmp.close === 'function') {
+            bmp.close();
+        }
+    } catch (err) {
+        console.error('[RASTER] failed:', err);
+    } finally {
+        rasterInFlight = false;
+        maybeScheduleRaster();
+    }
+}
+
+function rasterizeSvg(blobUrl, bounds, scale) {
+    const w = Math.max(1, Math.round(bounds.svgW * scale));
+    const h = Math.max(1, Math.round(bounds.svgH * scale));
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = async () => {
+            try {
+                if (typeof createImageBitmap === 'function') {
+                    try {
+                        const bmp = await createImageBitmap(img, {
+                            resizeWidth: w,
+                            resizeHeight: h,
+                            resizeQuality: 'high',
+                        });
+                        resolve(bmp);
+                        return;
+                    } catch (_) { /* fall through to canvas path */ }
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                const cctx = canvas.getContext('2d');
+                cctx.drawImage(img, 0, 0, w, h);
+                resolve(canvas);
+            } catch (e) { reject(e); }
+        };
+        img.onerror = () => reject(new Error('SVG image load failed'));
+        img.src = blobUrl;
+    });
 }
 
 // ─── Map loading ─────────────────────────────────────────────────────────────
@@ -227,24 +405,23 @@ async function loadMap(levelname) {
 
         mapBounds = { minsX, minsY, maxsX, maxsY, margin, labelHeight, svgW, svgH };
 
-        const blob = new Blob([svgText], { type: 'image/svg+xml' });
-        const blobUrl = URL.createObjectURL(blob);
+        // Release previous bitmap + blob
+        if (mapBitmap && typeof mapBitmap.close === 'function') mapBitmap.close();
+        mapBitmap = null;
+        mapBitmapScale = 0;
+        if (mapSvgBlobUrl) URL.revokeObjectURL(mapSvgBlobUrl);
 
-        const img = new Image();
-        img.onload = () => {
-            if (mapImg && mapImg._blobUrl) URL.revokeObjectURL(mapImg._blobUrl);
-            img._blobUrl = blobUrl;
-            mapImg = img;
-            fitToScreen();
-            render();
-        };
-        img.onerror = () => {
-            URL.revokeObjectURL(blobUrl);
-            console.error('[MAP] Image load failed for', levelname);
-        };
-        img.src = blobUrl;
+        const blob = new Blob([svgText], { type: 'image/svg+xml' });
+        mapSvgBlobUrl = URL.createObjectURL(blob);
+
+        fitToScreen();
+
+        // Initial raster at current effective scale (with headroom), capped.
+        pendingRasterScale = clampRasterScale(Math.max(effectiveScale(), 1) * RASTER_HEADROOM);
+        await runRaster();
 
         elMap.textContent = levelname;
+        scheduleRender(MAP_DIRTY | PLAYERS_DIRTY);
     } catch (err) {
         console.error('[MAP] Failed to load:', err);
         elMap.textContent = `${levelname} (error)`;
@@ -271,34 +448,41 @@ function connectSSE() {
                 statusMaxclients = parseInt(serverStatus.serverinfo.maxclients, 10) || 0;
             }
         }
+        invalidateConfigCaches();
         updatePlayerCount();
         checkMapChange();
-        render();
+        scheduleRender(PLAYERS_DIRTY);
     });
 
     es.addEventListener('serverdata', (e) => {
         const data = JSON.parse(e.data);
         configstrings = data.configstrings || {};
+        invalidateConfigCaches();
         checkMapChange();
+        scheduleRender(PLAYERS_DIRTY);
     });
 
     es.addEventListener('configstring', (e) => {
         const { index, value } = JSON.parse(e.data);
         configstrings[index] = value;
+        invalidateConfigCaches();
         checkMapChange();
+        scheduleRender(PLAYERS_DIRTY);
     });
 
     es.addEventListener('frame', (e) => {
         const data = JSON.parse(e.data);
         players = data.players || [];
+        teamMapCache = null; // player set may have changed
         updatePlayerCount();
-        render();
+        scheduleRender(PLAYERS_DIRTY);
     });
 
     es.addEventListener('status', (e) => {
         serverStatus = JSON.parse(e.data);
         if (serverStatus.serverinfo && serverStatus.serverinfo.maxclients) {
             statusMaxclients = parseInt(serverStatus.serverinfo.maxclients, 10) || 0;
+            recomputeMaxclients();
         }
     });
 
@@ -310,15 +494,15 @@ function connectSSE() {
 
 connectSSE();
 
-// ─── Zoom / Pan ───────────────────────────────────────────────────────────────
+// ─── Zoom / Pan ──────────────────────────────────────────────────────────────
 
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 10;
 
-canvas.addEventListener('wheel', (e) => {
+playersCanvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    const rect = canvas.getBoundingClientRect();
+    const rect = playersCanvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
     const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, transform.scale * factor));
@@ -328,28 +512,28 @@ canvas.addEventListener('wheel', (e) => {
         ty: my - (my - transform.ty) * ratio,
         scale: newScale,
     };
-    render();
+    scheduleRender(MAP_DIRTY | PLAYERS_DIRTY);
 }, { passive: false });
 
 let drag = null;
 
-canvas.addEventListener('mousedown', (e) => {
+playersCanvas.addEventListener('mousedown', (e) => {
     drag = { x: e.clientX - transform.tx, y: e.clientY - transform.ty };
-    canvas.classList.add('dragging');
+    playersCanvas.classList.add('dragging');
 });
 
 window.addEventListener('mousemove', (e) => {
     if (!drag) return;
     transform = { ...transform, tx: e.clientX - drag.x, ty: e.clientY - drag.y };
-    render();
+    scheduleRender(MAP_DIRTY | PLAYERS_DIRTY);
 });
 
 window.addEventListener('mouseup', () => {
     drag = null;
-    canvas.classList.remove('dragging');
+    playersCanvas.classList.remove('dragging');
 });
 
-canvas.addEventListener('dblclick', () => {
+playersCanvas.addEventListener('dblclick', () => {
     fitToScreen();
-    render();
+    scheduleRender(MAP_DIRTY | PLAYERS_DIRTY);
 });

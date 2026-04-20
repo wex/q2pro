@@ -8,16 +8,26 @@ body {
     background: #000;
 }
 
-#map {
+#map,
+#players {
     position: absolute;
     left: 0;
     top: 0;
     width: 100vw;
     height: 100vh;
+}
+
+#map {
+    pointer-events: none;
+    z-index: 0;
+}
+
+#players {
+    z-index: 1;
     cursor: grab;
 }
 
-#map.dragging {
+#players.dragging {
     cursor: grabbing;
 }
 
