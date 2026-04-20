@@ -17,7 +17,6 @@ let transform = { tx: 0, ty: 0, scale: 1 };
 let configstrings = {};
 let serverStatus = null;
 let statusMaxclients = 0;
-let statusPlayers = [];
 
 // ─── Canvas sizing ──────────────────────────────────────────────────────────
 
@@ -76,28 +75,31 @@ function render() {
     ctx.textBaseline = 'middle';
 
     const maxclients = statusMaxclients || parseInt(configstrings[CS_MAXCLIENTS_EXT] || configstrings[CS_MAXCLIENTS_OLD] || '0', 10);
+    const teamMap = buildTeamMap();
 
     for (const ent of players) {
         if (ent.number < 0 || ent.number >= maxclients) continue;
         const [sx, sy] = worldToSvg(ent.origin[0], ent.origin[1]);
+        const teamIdx = teamMap[ent.number];
+        const col = (teamIdx !== undefined && teamIdx < TEAM_COLOURS.length) ? TEAM_COLOURS[teamIdx] : DEFAULT_COLOUR;
 
         ctx.beginPath();
         ctx.arc(sx, sy, r, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(220, 30, 30, 0.85)';
+        ctx.fillStyle = col.fill;
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255, 160, 160, 0.9)';
+        ctx.strokeStyle = col.stroke;
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        const sp = statusPlayers.find(p => p.index === ent.number);
-        if (sp) {
+        const info = parsePlayerInfo(ent.number);
+        if (info.name) {
             const nameFontSize = Math.max(10, r * 1.6);
             ctx.font = `bold ${nameFontSize}px monospace`;
             ctx.fillStyle = '#fff';
             ctx.strokeStyle = '#000';
             ctx.lineWidth = 3;
-            ctx.strokeText(sp.name, sx, sy - r - 10);
-            ctx.fillText(sp.name, sx, sy - r - 10);
+            ctx.strokeText(info.name, sx, sy - r - 10);
+            ctx.fillText(info.name, sx, sy - r - 10);
             ctx.font = `bold ${fontSize}px monospace`;
         }
 
@@ -118,9 +120,9 @@ function render() {
         ctx.lineTo(tipX, tipY);
         ctx.lineTo(rightX, rightY);
         ctx.closePath();
-        ctx.fillStyle = 'rgba(255, 220, 50, 0.3)';
+        ctx.fillStyle = col.cone;
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255, 220, 50, 0.6)';
+        ctx.strokeStyle = col.coneStroke;
         ctx.lineWidth = 1.5;
         ctx.stroke();
     }
@@ -135,6 +137,40 @@ const CS_MAXCLIENTS_OLD = 30;
 const CS_MAXCLIENTS_EXT = 60;
 const CS_MODELS_OLD = 32;
 const CS_MODELS_EXT = 62;
+const CS_PLAYERSKINS_OLD = 1312;
+const CS_PLAYERSKINS_EXT = 12862;
+
+const TEAM_COLOURS = [
+    { fill: 'rgba(220, 30, 30, 0.85)', stroke: 'rgba(255, 160, 160, 0.9)', cone: 'rgba(220, 30, 30, 0.3)', coneStroke: 'rgba(220, 30, 30, 0.6)' },
+    { fill: 'rgba(30, 100, 220, 0.85)', stroke: 'rgba(160, 190, 255, 0.9)', cone: 'rgba(30, 100, 220, 0.3)', coneStroke: 'rgba(30, 100, 220, 0.6)' },
+    { fill: 'rgba(30, 180, 60, 0.85)', stroke: 'rgba(160, 255, 170, 0.9)', cone: 'rgba(30, 180, 60, 0.3)', coneStroke: 'rgba(30, 180, 60, 0.6)' },
+];
+const DEFAULT_COLOUR = { fill: 'rgba(140, 140, 140, 0.85)', stroke: 'rgba(200, 200, 200, 0.9)', cone: 'rgba(140, 140, 140, 0.3)', coneStroke: 'rgba(140, 140, 140, 0.6)' };
+
+function parsePlayerInfo(playerNumber) {
+    const cs =
+        configstrings[CS_PLAYERSKINS_EXT + playerNumber] ||
+        configstrings[CS_PLAYERSKINS_OLD + playerNumber] ||
+        '';
+    const sep = cs.indexOf('\\');
+    if (sep === -1) return { name: '', skin: cs };
+    return { name: cs.substring(0, sep), skin: cs.substring(sep + 1) };
+}
+
+function buildTeamMap() {
+    const skinToTeam = {};
+    const teamMap = {};
+    let nextTeam = 0;
+    for (const ent of players) {
+        const info = parsePlayerInfo(ent.number);
+        if (!info.skin) continue;
+        if (!(info.skin in skinToTeam)) {
+            skinToTeam[info.skin] = nextTeam++;
+        }
+        teamMap[ent.number] = skinToTeam[info.skin];
+    }
+    return teamMap;
+}
 
 function extractMapname() {
     const re = /^maps\/(.+)\.bsp$/;
@@ -220,9 +256,6 @@ function connectSSE() {
             if (serverStatus.serverinfo && serverStatus.serverinfo.maxclients) {
                 statusMaxclients = parseInt(serverStatus.serverinfo.maxclients, 10) || 0;
             }
-            if (Array.isArray(serverStatus.players)) {
-                statusPlayers = serverStatus.players.map((p, i) => ({ ...p, index: i }));
-            }
         }
         elEntities.textContent = `${players.length} player(s)`;
         checkMapChange();
@@ -252,9 +285,6 @@ function connectSSE() {
         serverStatus = JSON.parse(e.data);
         if (serverStatus.serverinfo && serverStatus.serverinfo.maxclients) {
             statusMaxclients = parseInt(serverStatus.serverinfo.maxclients, 10) || 0;
-        }
-        if (Array.isArray(serverStatus.players)) {
-            statusPlayers = serverStatus.players.map((p, i) => ({ ...p, index: i }));
         }
     });
 
