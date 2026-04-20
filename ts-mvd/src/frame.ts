@@ -92,8 +92,8 @@ const MSG_PS_MOREBITS = 1 << 6;
 
 const SND_VOLUME = 1 << 0;
 const SND_ATTENUATION = 1 << 1;
-const SND_OFFSET = 1 << 3;
-const SND_INDEX16 = 1 << 4;
+const SND_OFFSET = 1 << 4;
+const SND_INDEX16 = 1 << 5;
 
 // ── Public types ────────────────────────────────────────────────────
 
@@ -661,18 +661,16 @@ export class MvdFrameParser {
     private skipBlend(reader: BufferReader): void {
         if (this.psFlags & MSG_PS_EXTENSIONS_2) {
             const mask = reader.readUInt8();
-            if (mask & 1) {
-                reader.readUInt8();
-                reader.readUInt8();
-                reader.readUInt8();
-                reader.readUInt8();
-            }
-            if (mask & 2) {
-                reader.readUInt8();
-                reader.readUInt8();
-                reader.readUInt8();
-                reader.readUInt8();
-            }
+            // blend[0..3] — bits 0..3
+            if (mask & 1) reader.readUInt8();
+            if (mask & 2) reader.readUInt8();
+            if (mask & 4) reader.readUInt8();
+            if (mask & 8) reader.readUInt8();
+            // damage_blend[0..3] — bits 4..7
+            if (mask & 16) reader.readUInt8();
+            if (mask & 32) reader.readUInt8();
+            if (mask & 64) reader.readUInt8();
+            if (mask & 128) reader.readUInt8();
         } else {
             reader.readUInt8();
             reader.readUInt8();
@@ -683,14 +681,19 @@ export class MvdFrameParser {
 
     private skipFog(reader: BufferReader): void {
         const fogBits = reader.readUInt8();
-        if (fogBits & 1) { reader.readUInt8(); reader.readUInt8(); reader.readUInt8(); }
-        if (fogBits & 2) reader.readUInt16LE();
-        if (fogBits & 4) reader.readUInt16LE();
-        if (fogBits & 8) { reader.readUInt8(); reader.readUInt8(); reader.readUInt8(); }
-        if (fogBits & 16) reader.readUInt16LE();
-        if (fogBits & 32) { reader.readUInt8(); reader.readUInt8(); reader.readUInt8(); }
-        if (fogBits & 64) reader.readUInt16LE();
-        if (fogBits & 128) reader.readInt32LE();
+        if (fogBits & 1) { reader.readUInt8(); reader.readUInt8(); reader.readUInt8(); } // color
+        if (fogBits & 2) { reader.readUInt16LE(); reader.readUInt16LE(); } // density + sky_factor
+        if (fogBits & 4) reader.readUInt16LE(); // height density
+        if (fogBits & 8) reader.readUInt16LE(); // height falloff
+        if (fogBits & 16) { reader.readUInt8(); reader.readUInt8(); reader.readUInt8(); } // height start color
+        if (fogBits & 32) { reader.readUInt8(); reader.readUInt8(); reader.readUInt8(); } // height end color
+        if (fogBits & 64) this.skipExtCoord(reader); // height start dist
+        if (fogBits & 128) this.skipExtCoord(reader); // height end dist
+    }
+
+    private skipExtCoord(reader: BufferReader): void {
+        const v = reader.readUInt16LE();
+        if (v & 1) reader.readUInt8();
     }
 
     private skipStats(reader: BufferReader): void {
