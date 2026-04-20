@@ -86,12 +86,22 @@ client.on('streamStart', () => {
 });
 
 client.on('streamData', (data) => {
-    parser.parse(data);
+    try {
+        parser.parse(data);
+    } catch (err) {
+        console.error('[parse] Error parsing stream data, dropping frame:', err);
+        parser.reset();
+    }
 });
 
 client.on('streamResume', (data) => {
     console.log(`[stream] Resumed`);
-    parser.parse(data);
+    try {
+        parser.parse(data);
+    } catch (err) {
+        console.error('[parse] Error parsing resumed stream data, dropping frame:', err);
+        parser.reset();
+    }
 });
 
 client.on('streamSuspend', () => {
