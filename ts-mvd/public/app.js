@@ -157,6 +157,20 @@ function parsePlayerInfo(playerNumber) {
     return { name: cs.substring(0, sep), skin: cs.substring(sep + 1) };
 }
 
+function countActiveSkins() {
+    const maxclients = statusMaxclients || parseInt(configstrings[CS_MAXCLIENTS_EXT] || configstrings[CS_MAXCLIENTS_OLD] || '0', 10);
+    let count = 0;
+    for (let i = 0; i < maxclients; i++) {
+        const cs = configstrings[CS_PLAYERSKINS_EXT + i] || configstrings[CS_PLAYERSKINS_OLD + i] || '';
+        if (cs) count++;
+    }
+    return count;
+}
+
+function updatePlayerCount() {
+    elEntities.textContent = `${countActiveSkins()} player(s)`;
+}
+
 function buildTeamMap() {
     const skinToTeam = {};
     const teamMap = {};
@@ -257,7 +271,7 @@ function connectSSE() {
                 statusMaxclients = parseInt(serverStatus.serverinfo.maxclients, 10) || 0;
             }
         }
-        elEntities.textContent = `${players.length} player(s)`;
+        updatePlayerCount();
         checkMapChange();
         render();
     });
@@ -277,7 +291,7 @@ function connectSSE() {
     es.addEventListener('frame', (e) => {
         const data = JSON.parse(e.data);
         players = data.players || [];
-        elEntities.textContent = `${players.length} player(s)`;
+        updatePlayerCount();
         render();
     });
 
