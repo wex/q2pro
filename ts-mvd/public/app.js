@@ -1,7 +1,7 @@
 'use strict';
 
-const SSE_URL = 'http://localhost:8888/events';
-const MAP_URL = 'http://localhost:9999/map/';
+const SSE_URL = '/events';
+const MAP_URL = '/maps/';
 
 const canvas = document.getElementById('map');
 const ctx = canvas.getContext('2d');
@@ -12,8 +12,9 @@ const elEntities = document.getElementById('status-entities');
 let mapImg = null;
 let mapBounds = null;
 let currentMapname = '';
-let entities = [];
+let players = [];
 let transform = { tx: 0, ty: 0, scale: 1 };
+let configstrings = {};
 
 // ─── Canvas sizing ──────────────────────────────────────────────────────────
 
@@ -71,8 +72,7 @@ function render() {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    for (const ent of entities) {
-        if (ent.number > 16) break;
+    for (const ent of players) {
         const [sx, sy] = worldToSvg(ent.origin[0], ent.origin[1]);
 
         ctx.beginPath();
@@ -86,7 +86,7 @@ function render() {
         ctx.fillStyle = '#fff';
         ctx.fillText(String(ent.number), sx, sy);
 
-        const yaw = ent.angles[1];
+        const yaw = ent.viewangles[1];
         const ca = -yaw * (Math.PI / 180);
         const lineLen = r * 1.8;
         const tipX = sx + Math.cos(ca) * lineLen;
@@ -111,6 +111,26 @@ function render() {
     }
 
     ctx.restore();
+}
+
+// ─── Configstring → map name ─────────────────────────────────────────────────
+// Map BSP path is at CS_MODELS+1: index 33 (old protocol) or 63 (extended).
+
+const CS_MODELS_OLD = 32;
+const CS_MODELS_EXT = 62;
+
+function extractMapname() {
+    const bspPath = configstrings[CS_MODELS_EXT + 1] || configstrings[CS_MODELS_OLD + 1] || '';
+    const m = bspPath.match(/^maps\/(.+)\.bsp$/);
+    return m ? m[1] : '';
+}
+
+function checkMapChange() {
+    const mapname = extractMapname();
+    if (mapname && mapname !== currentMapname) {
+        currentMapname = mapname;
+        loadMap(currentMapname);
+    }
 }
 
 // ─── Map loading ─────────────────────────────────────────────────────────────
@@ -171,16 +191,31 @@ function connectSSE() {
         elConn.classList.add('connected');
     });
 
+    es.addEventListener('snapshot', (e) => {
+        const data = JSON.parse(e.data);
+        configstrings = data.configstrings || {};
+        players = data.players || [];
+        elEntities.textContent = `${players.length} player(s)`;
+        checkMapChange();
+        render();
+    });
+
+    es.addEventListener('serverdata', (e) => {
+        const data = JSON.parse(e.data);
+        configstrings = data.configstrings || {};
+        checkMapChange();
+    });
+
+    es.addEventListener('configstring', (e) => {
+        const { index, value } = JSON.parse(e.data);
+        configstrings[index] = value;
+        checkMapChange();
+    });
+
     es.addEventListener('frame', (e) => {
-        const { frame, context } = JSON.parse(e.data);
-
-        if (context.mapname && context.mapname !== currentMapname) {
-            currentMapname = context.mapname;
-            loadMap(currentMapname);
-        }
-
-        entities = frame.entities.filter(ent => ent.modelindex > 0);
-        elEntities.textContent = `${entities.length} ent`;
+        const data = JSON.parse(e.data);
+        players = data.players || [];
+        elEntities.textContent = `${players.length} player(s)`;
         render();
     });
 
