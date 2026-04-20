@@ -8,7 +8,7 @@ const client = new MvdClient({
     host,
     port,
     username: 'ts-mvd',
-    password: '',
+    password: 'aq2world',
     deflate: true,
     autoReconnect: true,
     reconnectDelay: 5000,
