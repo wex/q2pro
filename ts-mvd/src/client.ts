@@ -1,12 +1,10 @@
 import * as net from 'net';
-import * as zlib from 'zlib';
 import { EventEmitter } from 'events';
 import { BufferReader, BufferWriter } from './buffer';
 import {
     MVD_MAGIC,
     GTV_PROTOCOL_VERSION,
     MAX_GTS_MSGLEN,
-    GTF_DEFLATE,
     GTF_STRINGCMDS,
     GtvServerOp,
     GtvClientOp,
@@ -38,8 +36,6 @@ export interface MvdClientOptions {
     username?: string;
     password?: string;
     version?: string;
-    /** Request zlib compression (default: true) */
-    deflate?: boolean;
     /** Request string command forwarding (default: true) */
     stringCmds?: boolean;
     /** Max frames to buffer on server side (default: 25) */
@@ -77,11 +73,6 @@ export class MvdClient extends EventEmitter {
     private suspended = false;
     private destroyed = false;
 
-    // zlib inflate state
-    private zlibActive = false;
-    private inflate: zlib.Inflate | null = null;
-    private inflateBuf: Buffer = Buffer.alloc(0);
-
     private readonly opts: Required<MvdClientOptions>;
 
     constructor(options: MvdClientOptions) {
@@ -92,7 +83,6 @@ export class MvdClient extends EventEmitter {
             username: options.username ?? '',
             password: options.password ?? '',
             version: options.version ?? 'ts-mvd/1.0',
-            deflate: options.deflate ?? true,
             stringCmds: options.stringCmds ?? true,
             maxBuf: options.maxBuf ?? 25,
             pingInterval: options.pingInterval ?? 60_000,
@@ -182,14 +172,6 @@ export class MvdClient extends EventEmitter {
     }
 
     private onTcpData(chunk: Buffer): void {
-        if (this.zlibActive) {
-            // After deflate is negotiated, all incoming TCP data is compressed.
-            // Feed it directly to the inflate stream; decompressed output
-            // arrives asynchronously via the 'data' event on this.inflate.
-            this.feedInflate(chunk);
-            return;
-        }
-
         this.recvBuf = Buffer.concat([this.recvBuf, chunk]);
         this.drainRecvBuf();
     }
@@ -231,36 +213,6 @@ export class MvdClient extends EventEmitter {
             if (!this.parseOneMessage(this.recvBuf, (rest) => { this.recvBuf = rest; })) {
                 return;
             }
-        }
-    }
-
-    // ── Zlib inflate plumbing ───────────────────────────────────────
-
-    private setupInflate(): void {
-        this.inflate = zlib.createInflate();
-        this.zlibActive = true;
-        this.inflateBuf = Buffer.alloc(0);
-
-        this.inflate.on('data', (chunk: Buffer) => {
-            this.inflateBuf = Buffer.concat([this.inflateBuf, chunk]);
-            this.drainInflateBuf();
-        });
-
-        this.inflate.on('error', (err: Error) => {
-            this.emit('error', { code: 'ZLIB_ERROR', message: err.message });
-            this.disconnect();
-        });
-    }
-
-    private feedInflate(data: Buffer): void {
-        if (this.inflate && data.length > 0) {
-            this.inflate.write(data);
-        }
-    }
-
-    private drainInflateBuf(): void {
-        while (this.parseOneMessage(this.inflateBuf, (rest) => { this.inflateBuf = rest; })) {
-            // keep draining
         }
     }
 
@@ -370,17 +322,6 @@ export class MvdClient extends EventEmitter {
         this.emit('hello', this.negotiatedFlags);
         this.setState(ClientState.Preparing);
 
-        // If deflate was negotiated, set up inflate for all subsequent data
-        if (this.negotiatedFlags & GTF_DEFLATE) {
-            this.setupInflate();
-            // Any bytes already buffered after the hello are compressed
-            if (this.recvBuf.length > 0) {
-                const remaining = this.recvBuf;
-                this.recvBuf = Buffer.alloc(0);
-                this.feedInflate(remaining);
-            }
-        }
-
         // Automatically request stream start
         const w = new BufferWriter();
         w.writeInt16LE(this.opts.maxBuf);
@@ -429,7 +370,6 @@ export class MvdClient extends EventEmitter {
 
     private sendHello(): void {
         let flags = 0;
-        if (this.opts.deflate) flags |= GTF_DEFLATE;
         if (this.opts.stringCmds) flags |= GTF_STRINGCMDS;
 
         const w = new BufferWriter();
@@ -514,12 +454,6 @@ export class MvdClient extends EventEmitter {
             this.reconnectTimer = null;
         }
 
-        if (this.inflate) {
-            this.inflate.removeAllListeners();
-            this.inflate.destroy();
-            this.inflate = null;
-        }
-
         if (this.socket) {
             this.socket.removeAllListeners();
             this.socket.destroy();
@@ -527,9 +461,7 @@ export class MvdClient extends EventEmitter {
         }
 
         this.recvBuf = Buffer.alloc(0);
-        this.inflateBuf = Buffer.alloc(0);
         this.pendingMsgLen = 0;
-        this.zlibActive = false;
         this.suspended = false;
         this.negotiatedFlags = 0;
     }

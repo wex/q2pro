@@ -14,7 +14,6 @@ const client = new MvdClient({
     port,
     username: 'ts-mvd',
     password: 'aq2world',
-    deflate: true,
     autoReconnect: true,
     reconnectDelay: 5000,
 });
