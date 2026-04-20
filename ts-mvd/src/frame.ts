@@ -7,6 +7,10 @@ import {
     PROTOCOL_VERSION_MVD_EXTLIMITS,
     PROTOCOL_VERSION_MVD_EXTLIMITS2,
     PROTOCOL_VERSION_MVD_PLAYERFOG,
+    PrintLevel,
+    SvcOp,
+    TempEntityType,
+    Stat,
 } from './protocol';
 
 // ── PPS bit flags (from inc/common/protocol.h) ─────────────────────
@@ -107,11 +111,22 @@ export interface PlayerState {
     fov: number;
     gunindex: number;
     rdflags: number;
+    frags: number;
+    /** Last-seen STAT_* values (indexed by stat number, 0-initialised). */
+    stats: Int16Array;
+}
+
+export interface TeamScores {
+    team1: number;
+    team2: number;
+    team3: number;
 }
 
 export interface FrameEvent {
     frameNumber: number;
     players: ReadonlyArray<Readonly<PlayerState>>;
+    teamScores: TeamScores;
+    layoutsFlags: number;
 }
 
 export interface ConfigStringEvent {
@@ -129,6 +144,72 @@ export interface ServerDataEvent {
     configstrings: Map<number, string>;
 }
 
+// ── New event payloads ─────────────────────────────────────────────
+
+export interface PrintEvent {
+    /** PRINT_LOW=0, PRINT_MEDIUM=1, PRINT_HIGH=2, PRINT_CHAT=3 */
+    level: number;
+    text: string;
+    /** For unicast prints, the recipient client number. */
+    clientNum?: number;
+}
+
+export interface ChatEvent {
+    /** Speaker name, parsed from the leading "name: ..." portion when possible. */
+    name: string;
+    /** Chat body (without the "name: " prefix). */
+    text: string;
+    /** Full raw chat line (minus trailing newline). */
+    raw: string;
+}
+
+export interface ObituaryEvent {
+    victim: string;
+    /** null for suicide / world-caused deaths. */
+    attacker: string | null;
+    /** Coarse weapon/mod token parsed from the template, or null. */
+    weapon: string | null;
+    raw: string;
+}
+
+export interface HitEvent {
+    /** The player who dealt the hit (unicast recipient clientNum). */
+    attacker: number;
+    /** Parsed victim name from the print text. */
+    victim: string;
+    /** "head" | "chest" | "stomach" | "legs" | "body" | "" */
+    location: string;
+    raw: string;
+}
+
+export interface HitTakenEvent {
+    /** The player who received the hit (unicast recipient clientNum). */
+    victim: number;
+    attacker: string;
+    raw: string;
+}
+
+export interface LayoutEvent {
+    clientNum: number;
+    text: string;
+}
+
+export interface CenterPrintEvent {
+    clientNum: number;
+    text: string;
+}
+
+export interface TempEntityEvent {
+    type: number;
+    /** World-space position (undefined if not provided by the TE). */
+    position?: [number, number, number];
+}
+
+export interface StatsEvent {
+    clientNum: number;
+    stats: Int16Array;
+}
+
 // ── Frame parser ────────────────────────────────────────────────────
 
 export class MvdFrameParser {
@@ -142,10 +223,24 @@ export class MvdFrameParser {
     private esFlags = 0;
     private extended = false;
 
+    // Aggregated score state (updated via parseStats)
+    private teamScores: TeamScores = { team1: 0, team2: 0, team3: 0 };
+    private layoutsFlags = 0;
+    private statsArrayLen = 32;
+
     // Callbacks
     onFrame: ((event: FrameEvent) => void) | null = null;
     onServerData: ((event: ServerDataEvent) => void) | null = null;
     onConfigString: ((event: ConfigStringEvent) => void) | null = null;
+    onPrint: ((event: PrintEvent) => void) | null = null;
+    onChat: ((event: ChatEvent) => void) | null = null;
+    onObituary: ((event: ObituaryEvent) => void) | null = null;
+    onHit: ((event: HitEvent) => void) | null = null;
+    onHitTaken: ((event: HitTakenEvent) => void) | null = null;
+    onLayout: ((event: LayoutEvent) => void) | null = null;
+    onCenterPrint: ((event: CenterPrintEvent) => void) | null = null;
+    onTempEntity: ((event: TempEntityEvent) => void) | null = null;
+    onStats: ((event: StatsEvent) => void) | null = null;
 
     /**
      * Feed a raw MVD stream data buffer (the payload from GTS_STREAM_DATA).
@@ -171,7 +266,7 @@ export class MvdFrameParser {
                     break;
                 case MvdOp.Unicast:
                 case MvdOp.UnicastReliable:
-                    this.skipUnicast(reader, extrabits);
+                    this.parseUnicast(reader, extrabits);
                     break;
                 case MvdOp.MulticastAll:
                 case MvdOp.MulticastPhs:
@@ -179,13 +274,13 @@ export class MvdFrameParser {
                 case MvdOp.MulticastAllR:
                 case MvdOp.MulticastPhsR:
                 case MvdOp.MulticastPvsR:
-                    this.skipMulticast(reader, cmd, extrabits);
+                    this.parseMulticast(reader, cmd, extrabits);
                     break;
                 case MvdOp.Sound:
                     this.skipSound(reader);
                     break;
                 case MvdOp.Print:
-                    this.skipPrint(reader);
+                    this.parsePrint(reader);
                     break;
                 case MvdOp.Nop:
                     break;
@@ -204,6 +299,29 @@ export class MvdFrameParser {
         this.psFlags = 0;
         this.esFlags = 0;
         this.extended = false;
+        this.teamScores = { team1: 0, team2: 0, team3: 0 };
+        this.layoutsFlags = 0;
+        this.statsArrayLen = 32;
+    }
+
+    private getOrCreatePlayerState(number: number): PlayerState {
+        let ps = this.playerStates.get(number);
+        if (ps) return ps;
+        ps = {
+            number,
+            inUse: false,
+            pmType: 0,
+            origin: [0, 0, 0],
+            viewangles: [0, 0, 0],
+            viewoffset: [0, 0, 0],
+            fov: 90,
+            gunindex: 0,
+            rdflags: 0,
+            frags: 0,
+            stats: new Int16Array(this.statsArrayLen),
+        };
+        this.playerStates.set(number, ps);
+        return ps;
     }
 
     // ── ServerData ──────────────────────────────────────────────────
@@ -241,6 +359,11 @@ export class MvdFrameParser {
         if (version >= PROTOCOL_VERSION_MVD_PLAYERFOG && (flags & MvdFlags.ExtLimits2)) {
             this.psFlags |= MSG_PS_MOREBITS;
         }
+
+        // Stats array length depends on protocol: 64 for extensions2, 32 otherwise
+        this.statsArrayLen = (this.psFlags & MSG_PS_EXTENSIONS_2) ? 64 : 32;
+        this.teamScores = { team1: 0, team2: 0, team3: 0 };
+        this.layoutsFlags = 0;
 
         const servercount = reader.readInt32LE();
         const gamedir = reader.readString();
@@ -299,6 +422,8 @@ export class MvdFrameParser {
         this.onFrame?.({
             frameNumber: this.frameNumber,
             players: activePlayers,
+            teamScores: { ...this.teamScores },
+            layoutsFlags: this.layoutsFlags,
         });
 
         this.frameNumber++;
@@ -321,21 +446,7 @@ export class MvdFrameParser {
             }
 
             // Get or create player state
-            let ps = this.playerStates.get(number);
-            if (!ps) {
-                ps = {
-                    number,
-                    inUse: false,
-                    pmType: 0,
-                    origin: [0, 0, 0],
-                    viewangles: [0, 0, 0],
-                    viewoffset: [0, 0, 0],
-                    fov: 90,
-                    gunindex: 0,
-                    rdflags: 0,
-                };
-                this.playerStates.set(number, ps);
-            }
+            const ps: PlayerState = this.getOrCreatePlayerState(number);
 
             // Apply deltas — must consume all delta bytes even for
             // PPS_REMOVE, since the wire format includes them.
@@ -423,7 +534,7 @@ export class MvdFrameParser {
             }
 
             if (bits & PPS_STATS) {
-                this.skipStats(reader);
+                this.parseStats(reader, ps);
             }
 
             if (bits & PPS_REMOVE) {
@@ -610,30 +721,219 @@ export class MvdFrameParser {
         this.onConfigString?.({ index, value });
     }
 
-    private skipUnicast(reader: BufferReader, extrabits: number): void {
-        // length = byte | (extrabits << 8), then clientNum byte, then <length> bytes of data
+    private parseUnicast(reader: BufferReader, extrabits: number): void {
+        // length = byte | (extrabits << 8), then clientNum byte, then <length> bytes of data.
+        // The clientNum byte is NOT part of the inner svc payload.
         let length = reader.readUInt8();
         length |= extrabits << 8;
-        reader.readUInt8(); // clientNum
-        reader.readBytes(length);
+        const clientNum = reader.readUInt8();
+        const payload = reader.readBytes(length);
+
+        try {
+            this.parseInnerSvcMessages(new BufferReader(payload), clientNum);
+        } catch {
+            // Ignore inner parse errors — outer stream remains aligned because
+            // we already consumed `length` bytes above.
+        }
     }
 
-    private skipMulticast(reader: BufferReader, cmd: number, extrabits: number): void {
-        // length = byte | (extrabits << 8)
+    private parseMulticast(reader: BufferReader, cmd: number, extrabits: number): void {
         let length = reader.readUInt8();
         length |= extrabits << 8;
 
-        // Compute the multicast type (0=ALL, 1=PHS, 2=PVS)
         const base = cmd >= MvdOp.MulticastAllR
             ? cmd - MvdOp.MulticastAllR
             : cmd - MvdOp.MulticastAll;
 
-        // PHS and PVS variants include a leafnum
+        // PHS and PVS variants include a leafnum which is part of the wire framing
+        // but not part of the inner svc payload.
         if (base > 0) {
             reader.readUInt16LE(); // leafnum
         }
 
-        reader.readBytes(length);
+        const payload = reader.readBytes(length);
+        try {
+            this.parseInnerSvcMessages(new BufferReader(payload), -1);
+        } catch {
+            // ignored; see parseUnicast
+        }
+    }
+
+    // ── Inner svc_ dispatch (inside Unicast/Multicast payloads) ─────
+
+    private parseInnerSvcMessages(r: BufferReader, clientNum: number): void {
+        while (r.remaining > 0) {
+            const op = r.readUInt8();
+            switch (op) {
+                case SvcOp.Nop:
+                    break;
+                case SvcOp.Print: {
+                    const level = r.readUInt8();
+                    const text = r.readString();
+                    this.emitPrint(level, text, clientNum >= 0 ? clientNum : undefined);
+                    break;
+                }
+                case SvcOp.Layout: {
+                    const text = r.readString();
+                    if (clientNum >= 0) {
+                        this.onLayout?.({ clientNum, text });
+                    }
+                    break;
+                }
+                case SvcOp.CenterPrint: {
+                    const text = r.readString();
+                    if (clientNum >= 0) {
+                        this.onCenterPrint?.({ clientNum, text });
+                    }
+                    break;
+                }
+                case SvcOp.TempEntity:
+                    if (!this.parseTempEntity(r)) return;
+                    break;
+                case SvcOp.StuffText:
+                    // [string] — swallow and continue; harmless for observers.
+                    r.readString();
+                    break;
+                default:
+                    // Unknown or variable-length op we can't walk safely: stop.
+                    return;
+            }
+        }
+    }
+
+    private emitPrint(level: number, text: string, clientNum: number | undefined): void {
+        this.onPrint?.({ level, text, clientNum });
+
+        if (level === PrintLevel.Chat) {
+            const raw = text.replace(/\n+$/, '');
+            const sep = raw.indexOf(': ');
+            if (sep > 0) {
+                this.onChat?.({ name: raw.slice(0, sep), text: raw.slice(sep + 2), raw });
+            } else {
+                this.onChat?.({ name: '', text: raw, raw });
+            }
+            return;
+        }
+
+        if (level === PrintLevel.Medium) {
+            const ob = classifyObituary(text);
+            if (ob) this.onObituary?.(ob);
+            return;
+        }
+
+        if (level === PrintLevel.High && clientNum !== undefined) {
+            const hit = classifyHit(text);
+            if (hit) {
+                this.onHit?.({ attacker: clientNum, victim: hit.victim, location: hit.location, raw: hit.raw });
+                return;
+            }
+            const taken = classifyHitTaken(text);
+            if (taken) {
+                this.onHitTaken?.({ victim: clientNum, attacker: taken.attacker, raw: taken.raw });
+            }
+        }
+    }
+
+    // ── Temp-entity parsing (enough to surface hit events) ──────────
+
+    /** Returns false if parsing cannot safely continue on the inner reader. */
+    private parseTempEntity(r: BufferReader): boolean {
+        if (r.remaining < 1) return false;
+        const type = r.readUInt8();
+
+        // Types that carry [pos pos pos dir]
+        const POS_DIR = [
+            TempEntityType.Gunshot,
+            TempEntityType.Blood,
+            TempEntityType.Sparks,
+            TempEntityType.BulletSparks,
+            TempEntityType.ScreenSparks,
+            TempEntityType.ShieldSparks,
+            TempEntityType.Shotgun,
+            TempEntityType.Blaster,
+            TempEntityType.GreenBlood,
+            TempEntityType.MoreBlood,
+        ];
+
+        // Types that carry [count pos pos pos dir color]
+        const COUNT_POS_DIR_COLOR = [
+            TempEntityType.Splash,
+            TempEntityType.LaserSparks,
+            TempEntityType.WeldingSparks,
+            TempEntityType.TunnelSparks,
+        ];
+
+        // Types that carry just [pos]
+        const POS_ONLY = [
+            TempEntityType.GrenadeExpl,
+            TempEntityType.GrenadeExplWat,
+            TempEntityType.Explosion2,
+            TempEntityType.PlasmaExpl,
+            TempEntityType.RocketExpl,
+            TempEntityType.RocketExplWat,
+            TempEntityType.Explosion1,
+            TempEntityType.BfgExplosion,
+            TempEntityType.BfgBigExpl,
+            TempEntityType.BossTport,
+        ];
+
+        // Types that carry [pos pos]
+        const POS_POS = [
+            TempEntityType.BlueHyper,
+            TempEntityType.RailTrail,
+            TempEntityType.BubbleTrail,
+            TempEntityType.BfgLaser,
+        ];
+
+        try {
+            if (POS_DIR.includes(type)) {
+                const pos = this.readPos(r);
+                r.readUInt8(); // dir
+                this.onTempEntity?.({ type, position: pos });
+                return true;
+            }
+            if (COUNT_POS_DIR_COLOR.includes(type)) {
+                r.readUInt8(); // count
+                const pos = this.readPos(r);
+                r.readUInt8(); // dir
+                r.readUInt8(); // color
+                this.onTempEntity?.({ type, position: pos });
+                return true;
+            }
+            if (POS_ONLY.includes(type)) {
+                const pos = this.readPos(r);
+                this.onTempEntity?.({ type, position: pos });
+                return true;
+            }
+            if (POS_POS.includes(type)) {
+                const pos = this.readPos(r);
+                this.readPos(r);
+                this.onTempEntity?.({ type, position: pos });
+                return true;
+            }
+        } catch {
+            return false;
+        }
+
+        // Unknown or variable-format TE — we can't walk past it safely.
+        this.onTempEntity?.({ type });
+        return false;
+    }
+
+    private readPos(r: BufferReader): [number, number, number] {
+        const ext2 = !!(this.esFlags & MSG_ES_EXTENSIONS_2);
+        const read1 = () => {
+            if (ext2) {
+                const v = r.readUInt16LE();
+                if (v & 1) {
+                    const full = (v | (r.readUInt8() << 16)) >>> 1;
+                    return this.signExtend(full, 23) * (1 / 8);
+                }
+                return this.signExtend(v >>> 1, 15) * (1 / 8);
+            }
+            return r.readInt16LE() * (1 / 8);
+        };
+        return [read1(), read1(), read1()];
     }
 
     private skipSound(reader: BufferReader): void {
@@ -651,9 +951,10 @@ export class MvdFrameParser {
         reader.readUInt16LE(); // sendchan (entity+channel) — always present
     }
 
-    private skipPrint(reader: BufferReader): void {
-        reader.readUInt8(); // level
-        reader.readString(); // message
+    private parsePrint(reader: BufferReader): void {
+        const level = reader.readUInt8();
+        const text = reader.readString();
+        this.emitPrint(level, text, undefined);
     }
 
     private skipBlend(reader: BufferReader): void {
@@ -694,17 +995,44 @@ export class MvdFrameParser {
         if (v & 1) reader.readUInt8();
     }
 
-    private skipStats(reader: BufferReader): void {
+    private parseStats(reader: BufferReader, ps: PlayerState): void {
+        // Ensure the stat buffer matches the current protocol width.
+        if (ps.stats.length !== this.statsArrayLen) {
+            const grown = new Int16Array(this.statsArrayLen);
+            grown.set(ps.stats.subarray(0, Math.min(ps.stats.length, this.statsArrayLen)));
+            ps.stats = grown;
+        }
+
         if (this.psFlags & MSG_PS_EXTENSIONS_2) {
             const statbits = reader.readVarInt64();
             for (let i = 0; i < 64; i++) {
-                if (statbits & (1n << BigInt(i))) reader.readInt16LE();
+                if (statbits & (1n << BigInt(i))) {
+                    const v = reader.readInt16LE();
+                    if (i < ps.stats.length) ps.stats[i] = v;
+                    this.applyStat(i, v);
+                }
             }
         } else {
             const statbits = reader.readUInt32LE() >>> 0;
             for (let i = 0; i < 32; i++) {
-                if (statbits & (1 << i)) reader.readInt16LE();
+                if (statbits & (1 << i)) {
+                    const v = reader.readInt16LE();
+                    if (i < ps.stats.length) ps.stats[i] = v;
+                    this.applyStat(i, v);
+                }
             }
+        }
+
+        ps.frags = ps.stats[Stat.Frags] | 0;
+        this.onStats?.({ clientNum: ps.number, stats: ps.stats });
+    }
+
+    private applyStat(index: number, value: number): void {
+        switch (index) {
+            case Stat.Team1Score: this.teamScores.team1 = value; break;
+            case Stat.Team2Score: this.teamScores.team2 = value; break;
+            case Stat.Team3Score: this.teamScores.team3 = value; break;
+            case Stat.Layouts: this.layoutsFlags = value; break;
         }
     }
 
@@ -715,3 +1043,74 @@ export class MvdFrameParser {
         return [raw[0] * 0.125, raw[1] * 0.125, raw[2] * 0.125];
     }
 }
+
+// ── Print-text classifiers (plain strings from game DLL) ─────────────
+
+function stripTrailingNewline(s: string): string {
+    return s.replace(/\n+$/, '');
+}
+
+/**
+ * Parse a PRINT_HIGH line sent to the attacker. Examples (from AQ2/TNG):
+ *   "You hit NAME in the head\n"
+ *   "You hit NAME in the chest\n"
+ *   "You hit NAME in the stomach\n"
+ *   "You hit NAME in the legs\n"
+ *   "You hit NAME in the body\n"
+ *   "You hit your TEAMMATE NAME!\n"
+ */
+function classifyHit(text: string): { victim: string; location: string; raw: string } | null {
+    const raw = stripTrailingNewline(text);
+    let m = raw.match(/^You hit (.+?) in the (head|chest|stomach|legs|body)\b/);
+    if (m) return { victim: m[1], location: m[2], raw };
+    m = raw.match(/^You hit your TEAMMATE (.+?)!/);
+    if (m) return { victim: m[1], location: 'body', raw };
+    m = raw.match(/^You hit (.+?)'s .* from /); // disarm
+    if (m) return { victim: m[1], location: 'weapon', raw };
+    return null;
+}
+
+/**
+ * Parse a PRINT_HIGH line sent to the victim:
+ *   "You were hit by NAME, your TEAMMATE!\n"
+ */
+function classifyHitTaken(text: string): { attacker: string; raw: string } | null {
+    const raw = stripTrailingNewline(text);
+    const m = raw.match(/^You were hit by (.+?),/);
+    if (m) return { attacker: m[1], raw };
+    return null;
+}
+
+/**
+ * Parse a PRINT_MEDIUM broadcast obituary. Matches the common templates used
+ * by vanilla Q2 and AQ2/TNG `ClientObituary`. Output is best-effort.
+ */
+function classifyObituary(text: string): ObituaryEvent | null {
+    const raw = stripTrailingNewline(text);
+
+    // Suicides / world kills: "VICTIM killed himself", "VICTIM died."
+    let m = raw.match(/^(.+?) killed (?:him|her|them|it)self\b/);
+    if (m) return { victim: m[1], attacker: null, weapon: 'suicide', raw };
+
+    m = raw.match(/^(.+?) tried to put the pin back in\b/);
+    if (m) return { victim: m[1], attacker: null, weapon: 'grenade', raw };
+
+    m = raw.match(/^(.+?) (?:fell|melted|does a back flip into the lava|cratered|blew up)\b/);
+    if (m) return { victim: m[1], attacker: null, weapon: 'world', raw };
+
+    // Canonical AQ2/TNG: "VICTIM was <verb> by ATTACKER's WEAPON"
+    //   "was killed by", "was blown away by", "was shredded by", "was chopped up by"
+    //   "got a hole through the head from", "was perforated by", etc.
+    m = raw.match(/^(.+?) was (?:killed|blown away|shredded|chopped up|perforated|sniped|gunned down|brutalized) by (.+?)'s (.+?)\b[.!]?$/);
+    if (m) return { victim: m[1], attacker: m[2], weapon: m[3], raw };
+
+    m = raw.match(/^(.+?) was (?:killed|sniped|gunned down) by (.+?)\b[.!]?$/);
+    if (m) return { victim: m[1], attacker: m[2], weapon: null, raw };
+
+    // Vanilla Q2: "VICTIM was blasted by ATTACKER"
+    m = raw.match(/^(.+?) was (?:blasted|railed|nailed|bolted|killed) by (.+?)$/);
+    if (m) return { victim: m[1], attacker: m[2], weapon: null, raw };
+
+    return null;
+}
+

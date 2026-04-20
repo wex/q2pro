@@ -20,6 +20,25 @@ export {
     PROTOCOL_VERSION_MVD_PLAYERFOG,
     PROTOCOL_VERSION_MVD_CURRENT,
     ClientState,
+    PrintLevel,
+    SvcOp,
+    TempEntityType,
+    Stat,
 } from './protocol';
 export { BufferReader, BufferWriter } from './buffer';
-export { MvdFrameParser, PlayerState, FrameEvent, ServerDataEvent } from './frame';
+export {
+    MvdFrameParser,
+    PlayerState,
+    FrameEvent,
+    ServerDataEvent,
+    TeamScores,
+    PrintEvent,
+    ChatEvent,
+    ObituaryEvent,
+    HitEvent,
+    HitTakenEvent,
+    LayoutEvent,
+    CenterPrintEvent,
+    TempEntityEvent,
+    StatsEvent,
+} from './frame';

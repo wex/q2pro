@@ -10,6 +10,10 @@ const playersCtx = playersCanvas.getContext('2d');
 const elConn = document.getElementById('status-conn');
 const elMap = document.getElementById('status-map');
 const elEntities = document.getElementById('status-entities');
+const elScoreboardBody = document.querySelector('#scoreboard tbody');
+const elTeamScores = document.getElementById('team-scores');
+const elKillfeed = document.getElementById('killfeed');
+const elChat = document.getElementById('chat');
 
 let mapBitmap = null;           // ImageBitmap or HTMLCanvasElement
 let mapBitmapScale = 0;         // pixels per world unit used for current bitmap
@@ -458,6 +462,110 @@ async function loadMap(levelname) {
     }
 }
 
+// ─── Scoreboard / killfeed / chat state ─────────────────────────────────────
+
+let scoreboardState = { teamScores: { team1: 0, team2: 0, team3: 0 }, layoutsFlags: 0, layoutText: '', players: {} };
+
+const KILL_FEED_VISIBLE = 30;
+const CHAT_VISIBLE = 60;
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+}
+
+function pingForPlayer(name) {
+    if (!serverStatus || !serverStatus.players) return null;
+    for (const sp of serverStatus.players) {
+        if (sp.name === name) return sp.ping;
+    }
+    return null;
+}
+
+function renderTeamScores() {
+    const t = scoreboardState.teamScores || { team1: 0, team2: 0, team3: 0 };
+    const has3 = t.team3 !== 0;
+    // Show team scores only if any is non-zero.
+    if (!t.team1 && !t.team2 && !t.team3) {
+        elTeamScores.innerHTML = '';
+        return;
+    }
+    let html = `<span class="team team1">T1: ${t.team1}</span><span class="team team2">T2: ${t.team2}</span>`;
+    if (has3) html += `<span class="team team3">T3: ${t.team3}</span>`;
+    elTeamScores.innerHTML = html;
+}
+
+function renderScoreboard() {
+    renderTeamScores();
+
+    const rows = [];
+    const seen = new Set();
+    for (const [numStr, sbp] of Object.entries(scoreboardState.players || {})) {
+        const num = +numStr;
+        seen.add(num);
+        const info = getPlayerInfo(num);
+        if (!info.name) continue;
+        rows.push({ number: num, name: info.name, frags: sbp.frags || 0 });
+    }
+    // Also include anyone present via status/configstrings but not yet in a stats delta.
+    if (maxclientsCache > 0) {
+        for (let i = 0; i < maxclientsCache; i++) {
+            if (seen.has(i)) continue;
+            const info = getPlayerInfo(i);
+            if (!info.name) continue;
+            rows.push({ number: i, name: info.name, frags: 0 });
+        }
+    }
+
+    rows.sort((a, b) => b.frags - a.frags || a.name.localeCompare(b.name));
+
+    elScoreboardBody.innerHTML = rows.map((r) => {
+        const ping = pingForPlayer(r.name);
+        const pingStr = ping == null ? '-' : String(ping);
+        return `<tr data-num="${r.number}"><td>${r.number}</td><td>${escapeHtml(r.name)}</td><td class="num">${r.frags}</td><td class="num">${pingStr}</td></tr>`;
+    }).join('');
+}
+
+function flashScoreboardRow(num, cls) {
+    const row = elScoreboardBody.querySelector(`tr[data-num="${num}"]`);
+    if (!row) return;
+    row.classList.remove(cls);
+    // Force reflow to restart the animation.
+    void row.offsetWidth;
+    row.classList.add(cls);
+    setTimeout(() => row.classList.remove(cls), 600);
+}
+
+function appendKillfeed(ev) {
+    const li = document.createElement('li');
+    if (ev.attacker) {
+        const wep = ev.weapon ? ` <span class="weapon">[${escapeHtml(ev.weapon)}]</span>` : '';
+        li.innerHTML = `<span class="attacker">${escapeHtml(ev.attacker)}</span> \u2192 <span class="victim">${escapeHtml(ev.victim)}</span>${wep}`;
+    } else {
+        li.innerHTML = `<span class="victim">${escapeHtml(ev.victim)}</span> <span class="world">${escapeHtml(ev.weapon || 'died')}</span>`;
+    }
+    elKillfeed.appendChild(li);
+    while (elKillfeed.children.length > KILL_FEED_VISIBLE) {
+        elKillfeed.removeChild(elKillfeed.firstChild);
+    }
+    elKillfeed.scrollTop = elKillfeed.scrollHeight;
+}
+
+function appendChat(ev) {
+    const li = document.createElement('li');
+    if (ev.name) {
+        li.innerHTML = `<span class="name">${escapeHtml(ev.name)}</span>${escapeHtml(ev.text)}`;
+    } else {
+        li.innerHTML = `<span class="sys">${escapeHtml(ev.raw || ev.text)}</span>`;
+    }
+    elChat.appendChild(li);
+    while (elChat.children.length > CHAT_VISIBLE) {
+        elChat.removeChild(elChat.firstChild);
+    }
+    elChat.scrollTop = elChat.scrollHeight;
+}
+
 // ─── SSE connection ──────────────────────────────────────────────────────────
 
 function connectSSE() {
@@ -478,9 +586,16 @@ function connectSSE() {
                 statusMaxclients = parseInt(serverStatus.serverinfo.maxclients, 10) || 0;
             }
         }
+        if (data.scoreboard) scoreboardState = data.scoreboard;
         invalidateConfigCaches();
         updatePlayerCount();
         checkMapChange();
+        // Rehydrate killfeed + chat from snapshot.
+        elKillfeed.innerHTML = '';
+        for (const k of (data.killFeed || [])) appendKillfeed(k);
+        elChat.innerHTML = '';
+        for (const c of (data.chatLog || [])) appendChat(c);
+        renderScoreboard();
         scheduleRender(PLAYERS_DIRTY);
     });
 
@@ -489,6 +604,11 @@ function connectSSE() {
         configstrings = data.configstrings || {};
         invalidateConfigCaches();
         checkMapChange();
+        // Map/gamestate changed: clear transient feeds.
+        elKillfeed.innerHTML = '';
+        elChat.innerHTML = '';
+        scoreboardState = { teamScores: { team1: 0, team2: 0, team3: 0 }, layoutsFlags: 0, layoutText: '', players: {} };
+        renderScoreboard();
         scheduleRender(PLAYERS_DIRTY);
     });
 
@@ -497,6 +617,7 @@ function connectSSE() {
         configstrings[index] = value;
         invalidateConfigCaches();
         checkMapChange();
+        renderScoreboard();
         scheduleRender(PLAYERS_DIRTY);
     });
 
@@ -505,6 +626,17 @@ function connectSSE() {
         players = data.players || [];
         teamMapCache = null; // player set may have changed
         updatePlayerCount();
+
+        // Update scoreboard from frame-level stats.
+        if (data.teamScores) scoreboardState.teamScores = data.teamScores;
+        if (typeof data.layoutsFlags === 'number') scoreboardState.layoutsFlags = data.layoutsFlags;
+        const sbPlayers = {};
+        for (const p of data.players || []) {
+            sbPlayers[p.number] = { number: p.number, frags: p.frags || 0 };
+        }
+        scoreboardState.players = sbPlayers;
+        renderScoreboard();
+
         scheduleRender(PLAYERS_DIRTY);
     });
 
@@ -514,6 +646,34 @@ function connectSSE() {
             statusMaxclients = parseInt(serverStatus.serverinfo.maxclients, 10) || 0;
             recomputeMaxclients();
         }
+        renderScoreboard();
+    });
+
+    es.addEventListener('chat', (e) => {
+        appendChat(JSON.parse(e.data));
+    });
+
+    es.addEventListener('kill', (e) => {
+        appendKillfeed(JSON.parse(e.data));
+    });
+
+    es.addEventListener('hit', (e) => {
+        const ev = JSON.parse(e.data);
+        if (ev.kind === 'dealt' && typeof ev.attacker === 'number') {
+            flashScoreboardRow(ev.attacker, 'hit-dealt');
+        } else if (ev.kind === 'taken' && typeof ev.victim === 'number') {
+            flashScoreboardRow(ev.victim, 'hit-taken');
+        }
+    });
+
+    es.addEventListener('layout', (e) => {
+        const ev = JSON.parse(e.data);
+        scoreboardState.layoutText = ev.text;
+    });
+
+    es.addEventListener('te', () => {
+        // Temp-entity hit events are received; currently unused by this UI but
+        // available for richer visualisations in the future.
     });
 
     es.addEventListener('error', () => {

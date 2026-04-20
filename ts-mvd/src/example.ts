@@ -3,7 +3,17 @@ import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { MvdClient } from './index';
-import { MvdFrameParser, PlayerState } from './frame';
+import {
+    MvdFrameParser,
+    PlayerState,
+    ChatEvent,
+    ObituaryEvent,
+    HitEvent,
+    HitTakenEvent,
+    LayoutEvent,
+    TempEntityEvent,
+    TeamScores,
+} from './frame';
 import { BspFile } from './bsp';
 import { generateMapSvg } from './map-render';
 
@@ -23,6 +33,23 @@ const parser = new MvdFrameParser();
 
 const configstrings = new Map<number, string>();
 const players = new Map<number, PlayerState>();
+
+// ── Chat / kill-feed / scoreboard state ─────────────────────────
+
+const CHAT_LOG_MAX = 200;
+const KILL_FEED_MAX = 50;
+
+interface ChatEntry extends ChatEvent { t: number }
+interface KillEntry extends ObituaryEvent { t: number }
+
+const chatLog: ChatEntry[] = [];
+const killFeed: KillEntry[] = [];
+const scoreboard = {
+    teamScores: { team1: 0, team2: 0, team3: 0 } as TeamScores,
+    layoutsFlags: 0,
+    layoutText: '' as string,
+    players: {} as Record<number, { number: number; frags: number }>,
+};
 
 parser.onServerData = (ev) => {
     configstrings.clear();
@@ -140,6 +167,16 @@ function sseBroadcast(event: string, data: unknown): void {
 const origOnFrame = parser.onFrame;
 parser.onFrame = (ev) => {
     origOnFrame?.(ev);
+
+    // Keep the scoreboard in sync with live stats.
+    scoreboard.teamScores = ev.teamScores;
+    scoreboard.layoutsFlags = ev.layoutsFlags;
+    const sbPlayers: Record<number, { number: number; frags: number }> = {};
+    for (const p of ev.players) {
+        sbPlayers[p.number] = { number: p.number, frags: p.frags };
+    }
+    scoreboard.players = sbPlayers;
+
     sseBroadcast('frame', {
         frameNumber: ev.frameNumber,
         players: ev.players.map((p) => {
@@ -150,14 +187,25 @@ parser.onFrame = (ev) => {
                 viewangles: p.viewangles,
                 fov: p.fov,
                 gunindex: p.gunindex,
+                frags: p.frags,
             };
         }),
+        teamScores: ev.teamScores,
+        layoutsFlags: ev.layoutsFlags,
     });
 };
 
 const origOnServerData = parser.onServerData;
 parser.onServerData = (ev) => {
     origOnServerData?.(ev);
+    // Map changed: flush transient state so stale chat/kills don't linger.
+    chatLog.length = 0;
+    killFeed.length = 0;
+    scoreboard.players = {};
+    scoreboard.teamScores = { team1: 0, team2: 0, team3: 0 };
+    scoreboard.layoutsFlags = 0;
+    scoreboard.layoutText = '';
+
     const cs: Record<number, string> = {};
     for (const [k, v] of ev.configstrings) cs[k] = v;
     sseBroadcast('serverdata', {
@@ -174,6 +222,44 @@ const origOnConfigString = parser.onConfigString;
 parser.onConfigString = (ev) => {
     origOnConfigString?.(ev);
     sseBroadcast('configstring', ev);
+};
+
+// ── Chat / obituary / hit / layout wiring ───────────────────────
+
+parser.onChat = (ev: ChatEvent) => {
+    const entry: ChatEntry = { ...ev, t: Date.now() };
+    chatLog.push(entry);
+    if (chatLog.length > CHAT_LOG_MAX) chatLog.splice(0, chatLog.length - CHAT_LOG_MAX);
+    console.log(`[chat] ${ev.name ? ev.name + ': ' : ''}${ev.text}`);
+    sseBroadcast('chat', entry);
+};
+
+parser.onObituary = (ev: ObituaryEvent) => {
+    const entry: KillEntry = { ...ev, t: Date.now() };
+    killFeed.push(entry);
+    if (killFeed.length > KILL_FEED_MAX) killFeed.splice(0, killFeed.length - KILL_FEED_MAX);
+    console.log(`[kill] ${ev.raw}`);
+    sseBroadcast('kill', entry);
+};
+
+parser.onHit = (ev: HitEvent) => {
+    sseBroadcast('hit', { kind: 'dealt', ...ev });
+};
+
+parser.onHitTaken = (ev: HitTakenEvent) => {
+    sseBroadcast('hit', { kind: 'taken', ...ev });
+};
+
+parser.onLayout = (ev: LayoutEvent) => {
+    scoreboard.layoutText = ev.text;
+    sseBroadcast('layout', ev);
+};
+
+parser.onTempEntity = (ev: TempEntityEvent) => {
+    // Only forward hit-like types — everything else is noisy visual FX.
+    const HIT_TYPES = new Set([0 /* Gunshot */, 1 /* Blood */, 4 /* Shotgun */, 9 /* Sparks */, 14 /* BulletSparks */, 26 /* GreenBlood */, 42 /* MoreBlood */]);
+    if (!HIT_TYPES.has(ev.type)) return;
+    sseBroadcast('te', ev);
 };
 
 // ── OOB status polling via UDP ───────────────────────────────────
@@ -304,7 +390,14 @@ const httpServer = http.createServer((req, res) => {
             const pos = MvdFrameParser.originToWorld(p.origin);
             return { number: p.number, origin: pos, viewangles: p.viewangles, fov: p.fov, gunindex: p.gunindex };
         });
-        res.write(`event: snapshot\ndata: ${JSON.stringify({ configstrings: cs, players: ps, status: latestStatus })}\n\n`);
+        res.write(`event: snapshot\ndata: ${JSON.stringify({
+            configstrings: cs,
+            players: ps,
+            status: latestStatus,
+            chatLog,
+            killFeed,
+            scoreboard,
+        })}\n\n`);
 
         sseClients.add(res);
         req.on('close', () => sseClients.delete(res));

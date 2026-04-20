@@ -63,3 +63,185 @@ body {
 #status-entities {
     color: #888;
 }
+
+#panel {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 320px;
+    max-height: calc(100vh - 20px);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-family: monospace;
+    font-size: 12px;
+    color: #ddd;
+    z-index: 2;
+    pointer-events: auto;
+}
+
+#panel section {
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+#panel h3 {
+    margin: 0 0 4px 0;
+    font-size: 11px;
+    font-weight: bold;
+    color: #ccaa55;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+#scoreboard-section {
+    flex: 0 0 auto;
+}
+
+#killfeed-section {
+    flex: 1 1 30%;
+    overflow: hidden;
+}
+
+#chat-section {
+    flex: 1 1 40%;
+    overflow: hidden;
+}
+
+#team-scores {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 4px;
+    font-size: 11px;
+}
+
+#team-scores .team {
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: bold;
+}
+
+#team-scores .team1 {
+    background: rgba(220, 30, 30, 0.35);
+    color: #ffb0b0;
+}
+
+#team-scores .team2 {
+    background: rgba(30, 100, 220, 0.35);
+    color: #b0c8ff;
+}
+
+#team-scores .team3 {
+    background: rgba(30, 180, 60, 0.35);
+    color: #b0ffc0;
+}
+
+#scoreboard {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+#scoreboard th,
+#scoreboard td {
+    padding: 2px 4px;
+    text-align: left;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+#scoreboard th {
+    color: #888;
+    font-weight: normal;
+    font-size: 10px;
+    text-transform: uppercase;
+}
+
+#scoreboard td.num,
+#scoreboard th.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+#scoreboard tr.hit-dealt td {
+    animation: flashDealt 0.5s ease-out;
+}
+
+#scoreboard tr.hit-taken td {
+    animation: flashTaken 0.5s ease-out;
+}
+
+@keyframes flashDealt {
+    0% {
+        background: rgba(255, 230, 120, 0.6);
+    }
+
+    100% {
+        background: transparent;
+    }
+}
+
+@keyframes flashTaken {
+    0% {
+        background: rgba(255, 80, 80, 0.6);
+    }
+
+    100% {
+        background: transparent;
+    }
+}
+
+#killfeed,
+#chat {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+#killfeed li,
+#chat li {
+    padding: 2px 0;
+    line-height: 1.3;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    word-wrap: break-word;
+}
+
+#killfeed li .victim {
+    color: #f88;
+    font-weight: bold;
+}
+
+#killfeed li .attacker {
+    color: #8cf;
+    font-weight: bold;
+}
+
+#killfeed li .weapon {
+    color: #ccaa55;
+}
+
+#killfeed li .world {
+    color: #aaa;
+    font-style: italic;
+}
+
+#chat li .name {
+    color: #8f8;
+    font-weight: bold;
+}
+
+#chat li .name::after {
+    content: ': ';
+    color: #888;
+}
+
+#chat li .sys {
+    color: #ccaa55;
+    font-style: italic;
+}
