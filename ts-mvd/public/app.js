@@ -16,6 +16,8 @@ let players = [];
 let transform = { tx: 0, ty: 0, scale: 1 };
 let configstrings = {};
 let serverStatus = null;
+let statusMaxclients = 0;
+let statusPlayers = [];
 
 // ─── Canvas sizing ──────────────────────────────────────────────────────────
 
@@ -73,7 +75,7 @@ function render() {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    const maxclients = parseInt(configstrings[CS_MAXCLIENTS_EXT] || configstrings[CS_MAXCLIENTS_OLD] || '0', 10);
+    const maxclients = statusMaxclients || parseInt(configstrings[CS_MAXCLIENTS_EXT] || configstrings[CS_MAXCLIENTS_OLD] || '0', 10);
 
     for (const ent of players) {
         if (ent.number < 0 || ent.number >= maxclients) continue;
@@ -87,31 +89,40 @@ function render() {
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        ctx.fillStyle = '#fff';
-        ctx.fillText(String(ent.number), sx, sy);
+        const sp = statusPlayers.find(p => p.index === ent.number);
+        if (sp) {
+            const nameFontSize = Math.max(10, r * 1.6);
+            ctx.font = `bold ${nameFontSize}px monospace`;
+            ctx.fillStyle = '#fff';
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 3;
+            ctx.strokeText(sp.name, sx, sy - r - 10);
+            ctx.fillText(sp.name, sx, sy - r - 10);
+            ctx.font = `bold ${fontSize}px monospace`;
+        }
 
         const yaw = ent.viewangles[1];
         const ca = -yaw * (Math.PI / 180);
-        const lineLen = r * 1.8;
-        const tipX = sx + Math.cos(ca) * lineLen;
-        const tipY = sy + Math.sin(ca) * lineLen;
+        const coneLen = r * 4;
+        const coneHalf = 0.35;
+        const tipX = sx + Math.cos(ca) * coneLen;
+        const tipY = sy + Math.sin(ca) * coneLen;
+        const leftX = sx + Math.cos(ca - coneHalf) * coneLen;
+        const leftY = sy + Math.sin(ca - coneHalf) * coneLen;
+        const rightX = sx + Math.cos(ca + coneHalf) * coneLen;
+        const rightY = sy + Math.sin(ca + coneHalf) * coneLen;
 
         ctx.beginPath();
         ctx.moveTo(sx, sy);
+        ctx.lineTo(leftX, leftY);
         ctx.lineTo(tipX, tipY);
-        ctx.strokeStyle = 'rgba(255, 220, 50, 0.95)';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        const headLen = r * 0.7;
-        const headAngle = 0.45;
-        ctx.beginPath();
-        ctx.moveTo(tipX, tipY);
-        ctx.lineTo(tipX - headLen * Math.cos(ca - headAngle), tipY - headLen * Math.sin(ca - headAngle));
-        ctx.lineTo(tipX - headLen * Math.cos(ca + headAngle), tipY - headLen * Math.sin(ca + headAngle));
+        ctx.lineTo(rightX, rightY);
         ctx.closePath();
-        ctx.fillStyle = 'rgba(255, 220, 50, 0.95)';
+        ctx.fillStyle = 'rgba(255, 220, 50, 0.3)';
         ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 220, 50, 0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
     }
 
     ctx.restore();
@@ -204,7 +215,15 @@ function connectSSE() {
         const data = JSON.parse(e.data);
         configstrings = data.configstrings || {};
         players = data.players || [];
-        if (data.status) serverStatus = data.status;
+        if (data.status) {
+            serverStatus = data.status;
+            if (serverStatus.serverinfo && serverStatus.serverinfo.maxclients) {
+                statusMaxclients = parseInt(serverStatus.serverinfo.maxclients, 10) || 0;
+            }
+            if (Array.isArray(serverStatus.players)) {
+                statusPlayers = serverStatus.players.map((p, i) => ({ ...p, index: i }));
+            }
+        }
         elEntities.textContent = `${players.length} player(s)`;
         checkMapChange();
         render();
@@ -231,6 +250,12 @@ function connectSSE() {
 
     es.addEventListener('status', (e) => {
         serverStatus = JSON.parse(e.data);
+        if (serverStatus.serverinfo && serverStatus.serverinfo.maxclients) {
+            statusMaxclients = parseInt(serverStatus.serverinfo.maxclients, 10) || 0;
+        }
+        if (Array.isArray(serverStatus.players)) {
+            statusPlayers = serverStatus.players.map((p, i) => ({ ...p, index: i }));
+        }
     });
 
     es.addEventListener('error', () => {
