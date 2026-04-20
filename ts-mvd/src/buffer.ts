@@ -49,6 +49,18 @@ export class BufferReader {
         return v;
     }
 
+    readVarInt64(): bigint {
+        let v = 0n;
+        let bits = 0;
+        let c: number;
+        do {
+            c = this.readUInt8();
+            v |= BigInt(c & 0x7f) << BigInt(bits);
+            bits += 7;
+        } while ((c & 0x80) && bits < 64);
+        return v;
+    }
+
     // Read a null-terminated string
     readString(): string {
         const start = this.offset;

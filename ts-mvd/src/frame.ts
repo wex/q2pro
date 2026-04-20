@@ -688,13 +688,9 @@ export class MvdFrameParser {
 
     private skipStats(reader: BufferReader): void {
         if (this.psFlags & MSG_PS_EXTENSIONS_2) {
-            const lo = reader.readUInt32LE() >>> 0;
-            const hi = reader.readUInt32LE() >>> 0;
-            for (let i = 0; i < 32; i++) {
-                if (lo & (1 << i)) reader.readInt16LE();
-            }
-            for (let i = 0; i < 32; i++) {
-                if (hi & (1 << i)) reader.readInt16LE();
+            const statbits = reader.readVarInt64();
+            for (let i = 0; i < 64; i++) {
+                if (statbits & (1n << BigInt(i))) reader.readInt16LE();
             }
         } else {
             const statbits = reader.readUInt32LE() >>> 0;
