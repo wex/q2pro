@@ -269,7 +269,9 @@ const httpServer = http.createServer((req, res) => {
             return;
         }
         try {
-            const svg = generateMapSvg(bsp, mapName, { showGrid: url.searchParams.has('grid') });
+            const texturesDir = path.resolve(__dirname, '..', 'textures');
+            const colormapPath = path.resolve(__dirname, '..', 'colormap.pcx');
+            const svg = generateMapSvg(bsp, mapName, { showGrid: url.searchParams.has('grid'), texturesDir, colormapPath });
             res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
             res.end(svg);
         } catch (err: any) {

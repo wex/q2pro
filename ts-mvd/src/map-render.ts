@@ -4,7 +4,9 @@ import {
   BspFile,
   SURF_NODRAW, SURF_SKIP,
   type Vec3,
+  type Texinfo,
 } from './bsp';
+import { loadPalette, loadWalTexture, type LoadedTexture } from './wal';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────────────────
 
@@ -19,14 +21,86 @@ function escapeXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+function hashString(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  }
+  return h >>> 0;
+}
+
+// ─── Pattern transform ───────────────────────────────────────────────────────────────────
+//
+// Computes an SVG patternTransform matrix that maps the texture tile into SVG
+// user-space so that the BSP texinfo UV mapping is honoured.
+//
+// Texture coordinates (in texels):
+//   u = dot(worldPos, axisU) + offsetU
+//   v = dot(worldPos, axisV) + offsetV
+//
+// SVG coordinates (1:1 scale):
+//   svgX = margin + (worldX - mins.x)
+//   svgY = labelHeight + margin + (maxs.y - worldY)          (Y flipped)
+//
+// We need the *inverse* mapping: pattern-space (u,v) → SVG-space (sx,sy).
+//
+// From the forward mapping (ignoring Z — adequate for upward-facing floors):
+//   u = axisU.x * (sx - ox) + axisU.y * (oy - sy) + offsetU
+//   v = axisV.x * (sx - ox) + axisV.y * (oy - sy) + offsetV
+// where ox = margin - mins.x,  oy = maxs.y + labelHeight + margin
+//
+// In matrix form [u,v] = A · [sx,sy,1]:
+//   a = axisU.x,  b = -axisU.y,  cu = -ox·axisU.x + oy·axisU.y + offsetU
+//   d = axisV.x,  e = -axisV.y,  cv = -ox·axisV.x + oy·axisV.y + offsetV
+//
+// The inverse (SVG matrix(A,B,C,D,E,F)) maps (u,v)→(sx,sy).
+
+function computePatternTransform(
+  ti: Texinfo,
+  tex: LoadedTexture,
+  mins: Vec3,
+  maxs: Vec3,
+  margin: number,
+  labelHeight: number,
+): string {
+  const ox = margin - mins.x;
+  const oy = maxs.y + labelHeight + margin;
+
+  const a = ti.axisU.x;
+  const b = -ti.axisU.y;
+  const cu = -ox * ti.axisU.x + oy * ti.axisU.y + ti.offsetU;
+
+  const d = ti.axisV.x;
+  const e = -ti.axisV.y;
+  const cv = -ox * ti.axisV.x + oy * ti.axisV.y + ti.offsetV;
+
+  const det = a * e - b * d;
+  if (Math.abs(det) < 1e-12) {
+    // Degenerate — fall back to identity (texture won't align but won't crash)
+    return 'matrix(1,0,0,1,0,0)';
+  }
+
+  const invDet = 1 / det;
+
+  // SVG matrix(A,B,C,D,E,F):  sx = A·u + C·v + E,  sy = B·u + D·v + F
+  const A = e * invDet;
+  const B = -d * invDet;
+  const C = -b * invDet;
+  const D = a * invDet;
+  const E = (b * cv - e * cu) * invDet;
+  const F = (d * cu - a * cv) * invDet;
+
+  return `matrix(${A.toFixed(6)},${B.toFixed(6)},${C.toFixed(6)},${D.toFixed(6)},${E.toFixed(6)},${F.toFixed(6)})`;
+}
+
 // ─── SVG generation ─────────────────────────────────────────────────────────────────────
 
 export function generateMapSvg(
   bsp: BspFile,
   mapName: string,
-  options: { showGrid?: boolean; showMarkers?: boolean } = {},
+  options: { showGrid?: boolean; showMarkers?: boolean; texturesDir?: string; colormapPath?: string } = {},
 ): string {
-  const { showGrid = false, showMarkers = false } = options;
+  const { showGrid = false, showMarkers = false, texturesDir, colormapPath } = options;
 
   const world = bsp.getWorldModel();
 
@@ -67,6 +141,8 @@ export function generateMapSvg(
     points: [number, number][];
     avgZ: number;     // average vertex Z — used for height colouring & sort
     fill: string;     // assigned after global min/max pass
+    textureName: string;
+    texinfoIdx: number;
   }
 
   const polys: PolyRecord[] = [];
@@ -92,7 +168,7 @@ export function generateMapSvg(
       const pts = verts.map(v => toSvg(v.x, v.y));
       const avgZ = verts.reduce((s, v) => s + v.z, 0) / verts.length;
 
-      polys.push({ points: pts, avgZ, fill: '' }); // fill assigned below
+      polys.push({ points: pts, avgZ, fill: '', textureName: ti.name, texinfoIdx: face.texinfo });
     }
   }
 
@@ -105,9 +181,20 @@ export function generateMapSvg(
     processFaces(m.firstface, m.numfaces);
   }
 
-  // ─── Second pass: assign grayscale fill by height ────────────────────────────
-  //
-  // black rgb(0,0,0) = lowest Z   white rgb(255,255,255) = highest Z
+  // ─── Load WAL textures ─────────────────────────────────────────────────────
+
+  const textureCache = new Map<string, LoadedTexture | null>();
+  if (texturesDir && colormapPath) {
+    const palette = loadPalette(colormapPath);
+    const uniqueNames = new Set(polys.map(p => p.textureName));
+    for (const name of uniqueNames) {
+      if (!textureCache.has(name)) {
+        textureCache.set(name, loadWalTexture(texturesDir, name, palette));
+      }
+    }
+  }
+
+  // ─── Second pass: assign fill by texture or height-based HSL ─────────────────
 
   let minZ = Infinity, maxZ = -Infinity;
   for (const p of polys) {
@@ -116,9 +203,37 @@ export function generateMapSvg(
   }
 
   const zRange = maxZ - minZ || 1; // guard against flat maps
+
+  // Build SVG <pattern> definitions for texinfo entries that have loaded textures
+  const patternDefs: string[] = [];
+  const patternTexinfoSet = new Set<number>();
+
   for (const p of polys) {
-    const v = Math.round(((p.avgZ - minZ) / zRange) * 255);
-    p.fill = `rgb(${v},${v},${v})`;
+    const tex = textureCache.get(p.textureName);
+    if (tex && !patternTexinfoSet.has(p.texinfoIdx)) {
+      patternTexinfoSet.add(p.texinfoIdx);
+      const ti = bsp.texinfo[p.texinfoIdx];
+      const transform = computePatternTransform(ti, tex, world.mins, world.maxs, MARGIN, LABEL_HEIGHT);
+      patternDefs.push(
+        `  <pattern id="ti-${p.texinfoIdx}" patternUnits="userSpaceOnUse"` +
+        ` width="${tex.width}" height="${tex.height}"` +
+        ` patternTransform="${transform}">` +
+        `<image href="${tex.dataUrl}" width="${tex.width}" height="${tex.height}"/>` +
+        `</pattern>`,
+      );
+    }
+  }
+
+  for (const p of polys) {
+    const tex = textureCache.get(p.textureName);
+    if (tex && patternTexinfoSet.has(p.texinfoIdx)) {
+      p.fill = `url(#ti-${p.texinfoIdx})`;
+    } else {
+      // Fallback: deterministic hue from texture name + height-based lightness
+      const hue = hashString(p.textureName) % 360;
+      const lightness = 20 + Math.round(((p.avgZ - minZ) / zRange) * 50); // 20–70%
+      p.fill = `hsl(${hue},45%,${lightness}%)`;
+    }
   }
 
   // Sort ascending by Z so lower floors render first (painter's algorithm)
@@ -207,8 +322,12 @@ export function generateMapSvg(
     const d = p.points
       .map((pt, i) => `${i === 0 ? 'M' : 'L'}${pt[0].toFixed(1)},${pt[1].toFixed(1)}`)
       .join(' ') + ' Z';
-    return `  <path d="${d}" fill="${p.fill}" stroke="rgba(0,0,0,0.3)" stroke-width="0.3" stroke-linejoin="round"/>`;
+    const title = `<title>${escapeXml(p.textureName)}</title>`;
+    return `  <path d="${d}" fill="${p.fill}" stroke="rgba(0,0,0,0.3)" stroke-width="0.3" stroke-linejoin="round">${title}</path>`;
   }).join('\n');
+
+  const defsSection = patternDefs.length > 0
+    ? `  <defs>\n${patternDefs.join('\n')}\n  </defs>` : '';
 
   // Compass rose (top-right corner)
   const compassX = SVG_W - MARGIN / 2;
@@ -231,6 +350,8 @@ export function generateMapSvg(
      data-mins-x="${world.mins.x}" data-mins-y="${world.mins.y}"
      data-maxs-x="${world.maxs.x}" data-maxs-y="${world.maxs.y}"
      data-margin="${MARGIN}" data-label-height="${LABEL_HEIGHT}">
+
+${defsSection}
 
   <!-- Background -->
   <rect width="${SVG_W}" height="${SVG_H}" fill="#000000"/>
@@ -271,7 +392,9 @@ if (isCLI) {
     console.error('Usage: npx tsx src/map-render.ts <file.bsp> [output.svg] [--grid]');
     console.error('');
     console.error('Generates a 2D top-down SVG overview of a Quake 2 map.');
-    console.error('  --grid   overlay a 64-unit coordinate grid aligned to the world origin');
+    console.error('  --grid              overlay a 64-unit coordinate grid aligned to the world origin');
+    console.error('  --textures=<dir>    path to WAL textures directory');
+    console.error('  --colormap=<file>   path to colormap.pcx for WAL palette');
     process.exit(1);
   }
 
@@ -291,7 +414,13 @@ if (isCLI) {
   console.log(`Vertices: ${bsp.vertices.length}`);
   console.log(`Bounds  : [${fmtV(world.mins)}] – [${fmtV(world.maxs)}]`);
 
-  const svg = generateMapSvg(bsp, path.basename(bspPath, path.extname(bspPath)), { showGrid: cliShowGrid });
+  const cliTexturesDir = args.find(a => a.startsWith('--textures='))?.split('=')[1];
+  const cliColormapPath = args.find(a => a.startsWith('--colormap='))?.split('=')[1];
+  const svg = generateMapSvg(bsp, path.basename(bspPath, path.extname(bspPath)), {
+    showGrid: cliShowGrid,
+    texturesDir: cliTexturesDir,
+    colormapPath: cliColormapPath,
+  });
 
   fs.writeFileSync(outPath, svg, 'utf8');
   console.log(`Output  : ${outPath}`);
