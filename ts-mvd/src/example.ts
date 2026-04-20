@@ -1,3 +1,4 @@
+import * as dgram from 'node:dgram';
 import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -168,6 +169,76 @@ parser.onConfigString = (ev) => {
     sseBroadcast('configstring', ev);
 };
 
+// ── OOB status polling via UDP ───────────────────────────────────
+
+interface StatusPlayer {
+    name: string;
+    frags: number;
+    ping: number;
+}
+
+interface StatusData {
+    serverinfo: Record<string, string>;
+    players: StatusPlayer[];
+}
+
+let latestStatus: StatusData | null = null;
+
+const udpSock = dgram.createSocket('udp4');
+
+udpSock.on('message', (msg: Buffer) => {
+    // OOB packets start with 0xFFFFFFFF
+    if (msg.length < 4 || msg[0] !== 0xff || msg[1] !== 0xff || msg[2] !== 0xff || msg[3] !== 0xff) return;
+
+    const text = msg.subarray(4).toString('ascii');
+    if (!text.startsWith('print\n')) return;
+
+    const body = text.slice(6); // skip "print\n"
+    const lines = body.split('\n').filter((l) => l.length > 0);
+    if (lines.length === 0) return;
+
+    // First line: serverinfo (\key\value pairs)
+    const serverinfo: Record<string, string> = {};
+    const infoParts = lines[0].split('\\');
+    // infoParts[0] is empty (leading backslash), then key, value, key, value...
+    for (let i = 1; i + 1 < infoParts.length; i += 2) {
+        serverinfo[infoParts[i]] = infoParts[i + 1];
+    }
+
+    // Remaining lines: frags ping "name"
+    const statusPlayers: StatusPlayer[] = [];
+    for (let i = 1; i < lines.length; i++) {
+        const m = lines[i].match(/^(-?\d+)\s+(\d+)\s+"(.+)"$/);
+        if (m) {
+            statusPlayers.push({ frags: parseInt(m[1], 10), ping: parseInt(m[2], 10), name: m[3] });
+        }
+    }
+
+    latestStatus = { serverinfo, players: statusPlayers };
+    console.log(`[status] ${statusPlayers.length} player(s) in server info`);
+    sseBroadcast('status', latestStatus);
+});
+
+udpSock.on('error', (err) => {
+    console.error(`[udp] Error: ${err.message}`);
+});
+
+function sendOOBStatus(): void {
+    const header = Buffer.alloc(4, 0xff);
+    const payload = Buffer.from('status\n', 'ascii');
+    const packet = Buffer.concat([header, payload]);
+    udpSock.send(packet, 0, packet.length, port, host);
+}
+
+// Trigger OOB status query every 30th frame
+const origOnFrame2 = parser.onFrame;
+parser.onFrame = (ev) => {
+    origOnFrame2?.(ev);
+    if (ev.frameNumber > 0 && ev.frameNumber % 30 === 0) {
+        sendOOBStatus();
+    }
+};
+
 // ── HTTP server ─────────────────────────────────────────────────
 
 const MAPS_DIR = path.resolve(__dirname, '..', 'maps');
@@ -224,7 +295,7 @@ const httpServer = http.createServer((req, res) => {
             const pos = MvdFrameParser.originToWorld(p.origin);
             return { number: p.number, origin: pos, viewangles: p.viewangles, fov: p.fov, gunindex: p.gunindex };
         });
-        res.write(`event: snapshot\ndata: ${JSON.stringify({ configstrings: cs, players: ps })}\n\n`);
+        res.write(`event: snapshot\ndata: ${JSON.stringify({ configstrings: cs, players: ps, status: latestStatus })}\n\n`);
 
         sseClients.add(res);
         req.on('close', () => sseClients.delete(res));
@@ -269,6 +340,7 @@ client.connect();
 process.on('SIGINT', () => {
     console.log('\nDisconnecting...');
     httpServer.close();
+    udpSock.close();
     client.disconnect();
     process.exit(0);
 });

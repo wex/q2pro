@@ -15,6 +15,7 @@ let currentMapname = '';
 let players = [];
 let transform = { tx: 0, ty: 0, scale: 1 };
 let configstrings = {};
+let serverStatus = null;
 
 // ─── Canvas sizing ──────────────────────────────────────────────────────────
 
@@ -203,6 +204,7 @@ function connectSSE() {
         const data = JSON.parse(e.data);
         configstrings = data.configstrings || {};
         players = data.players || [];
+        if (data.status) serverStatus = data.status;
         elEntities.textContent = `${players.length} player(s)`;
         checkMapChange();
         render();
@@ -225,6 +227,10 @@ function connectSSE() {
         players = data.players || [];
         elEntities.textContent = `${players.length} player(s)`;
         render();
+    });
+
+    es.addEventListener('status', (e) => {
+        serverStatus = JSON.parse(e.data);
     });
 
     es.addEventListener('error', () => {
