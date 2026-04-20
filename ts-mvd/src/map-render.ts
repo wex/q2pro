@@ -143,6 +143,8 @@ export function generateMapSvg(
     fill: string;     // assigned after global min/max pass
     textureName: string;
     texinfoIdx: number;
+    hasTexture: boolean;  // true when a WAL texture pattern is used
+    darkOverlay: number;  // black overlay opacity (0 = none, 0.5 = ground)
   }
 
   const polys: PolyRecord[] = [];
@@ -168,7 +170,7 @@ export function generateMapSvg(
       const pts = verts.map(v => toSvg(v.x, v.y));
       const avgZ = verts.reduce((s, v) => s + v.z, 0) / verts.length;
 
-      polys.push({ points: pts, avgZ, fill: '', textureName: ti.name, texinfoIdx: face.texinfo });
+      polys.push({ points: pts, avgZ, fill: '', textureName: ti.name, texinfoIdx: face.texinfo, hasTexture: false, darkOverlay: 0 });
     }
   }
 
@@ -228,6 +230,9 @@ export function generateMapSvg(
     const tex = textureCache.get(p.textureName);
     if (tex && patternTexinfoSet.has(p.texinfoIdx)) {
       p.fill = `url(#ti-${p.texinfoIdx})`;
+      p.hasTexture = true;
+      // Height-based darkening: 1.0 at lowest Z (ground), 0.2 at highest Z (sky)
+      p.darkOverlay = 0.2 + 0.8 * (1 - (p.avgZ - minZ) / zRange);
     } else {
       // Fallback: deterministic hue from texture name + height-based lightness
       const hue = hashString(p.textureName) % 360;
@@ -323,7 +328,12 @@ export function generateMapSvg(
       .map((pt, i) => `${i === 0 ? 'M' : 'L'}${pt[0].toFixed(1)},${pt[1].toFixed(1)}`)
       .join(' ') + ' Z';
     const title = `<title>${escapeXml(p.textureName)}</title>`;
-    return `  <path d="${d}" fill="${p.fill}" stroke="rgba(0,0,0,0.3)" stroke-width="0.3" stroke-linejoin="round">${title}</path>`;
+    let el = `  <path d="${d}" fill="${p.fill}" stroke="rgba(0,0,0,0.3)" stroke-width="0.3" stroke-linejoin="round">${title}</path>`;
+    // Height-based black overlay on textured polygons
+    if (p.hasTexture && p.darkOverlay > 0.001) {
+      el += `\n  <path d="${d}" fill="black" opacity="${p.darkOverlay.toFixed(3)}" stroke="none"/>`;
+    }
+    return el;
   }).join('\n');
 
   const defsSection = patternDefs.length > 0
