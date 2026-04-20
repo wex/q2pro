@@ -231,8 +231,8 @@ export function generateMapSvg(
     if (tex && patternTexinfoSet.has(p.texinfoIdx)) {
       p.fill = `url(#ti-${p.texinfoIdx})`;
       p.hasTexture = true;
-      // Height-based darkening: 1.0 at lowest Z (ground), 0.2 at highest Z (sky)
-      p.darkOverlay = 0.2 + 0.8 * (1 - (p.avgZ - minZ) / zRange);
+      // Height-based darkening: 0.4 at lowest Z (ground), 0.0 at highest Z (sky)
+      p.darkOverlay = 0.4 * (1 - (p.avgZ - minZ) / zRange);
     } else {
       // Fallback: deterministic hue from texture name + height-based lightness
       const hue = hashString(p.textureName) % 360;
