@@ -22,3 +22,4 @@ export {
     ClientState,
 } from './protocol';
 export { BufferReader, BufferWriter } from './buffer';
+export { MvdFrameParser, PlayerState, FrameEvent, ServerDataEvent } from './frame';

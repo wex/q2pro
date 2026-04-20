@@ -3,7 +3,7 @@
 export class BufferReader {
     private offset = 0;
 
-    constructor(private buf: Buffer) {}
+    constructor(private buf: Buffer) { }
 
     get remaining(): number {
         return this.buf.length - this.offset;
@@ -15,6 +15,12 @@ export class BufferReader {
 
     readUInt8(): number {
         const v = this.buf.readUInt8(this.offset);
+        this.offset += 1;
+        return v;
+    }
+
+    readInt8(): number {
+        const v = this.buf.readInt8(this.offset);
         this.offset += 1;
         return v;
     }
