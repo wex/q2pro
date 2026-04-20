@@ -232,15 +232,45 @@ function getPlayerInfo(n) {
     return info;
 }
 
+const CTF_SKIN_INDEX = { ctf_r: 0, ctf_b: 1, ctf_g: 2 };
+
+function ctfIndexForSkin(skin) {
+    const slash = skin.lastIndexOf('/');
+    const suffix = (slash === -1 ? skin : skin.substring(slash + 1)).toLowerCase();
+    return CTF_SKIN_INDEX[suffix];
+}
+
 function getTeamMap() {
     if (teamMapCache) return teamMapCache;
     const skinToTeam = {};
     const teamMap = {};
+    const used = new Set();
+
+    // First pass: assign fixed indices for CTF skins.
+    for (const ent of players) {
+        const info = getPlayerInfo(ent.number);
+        if (!info.skin || info.skin in skinToTeam) continue;
+        const ctfIdx = ctfIndexForSkin(info.skin);
+        if (ctfIdx !== undefined) {
+            skinToTeam[info.skin] = ctfIdx;
+            used.add(ctfIdx);
+        }
+    }
+
+    // Second pass: assign remaining skins to the next available colour index.
     let nextTeam = 0;
     for (const ent of players) {
         const info = getPlayerInfo(ent.number);
+        if (!info.skin || info.skin in skinToTeam) continue;
+        while (used.has(nextTeam)) nextTeam++;
+        skinToTeam[info.skin] = nextTeam;
+        used.add(nextTeam);
+        nextTeam++;
+    }
+
+    for (const ent of players) {
+        const info = getPlayerInfo(ent.number);
         if (!info.skin) continue;
-        if (!(info.skin in skinToTeam)) skinToTeam[info.skin] = nextTeam++;
         teamMap[ent.number] = skinToTeam[info.skin];
     }
     teamMapCache = teamMap;
