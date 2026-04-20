@@ -64,9 +64,6 @@ parser.onFrame = (ev) => {
     for (const p of ev.players) {
         players.set(p.number, p);
     }
-
-    console.log(`[frame ${ev.frameNumber}] ${ev.players.length} player(s)`);
-    lines.forEach((l) => console.log(l));
 };
 
 client.on('stateChange', ({ from, to }) => {
