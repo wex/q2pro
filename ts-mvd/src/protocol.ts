@@ -143,13 +143,17 @@ export enum TempEntityType {
     MoreBlood = 42,
 }
 
-// player_state stat indices we surface explicitly
+// player_state stat indices we surface explicitly.
+// Order matches the anonymous enum in inc/shared/shared.h used by the AQtion
+// game DLL (AQ2/TNG layout): STAT_TEAM1_SCORE=26, STAT_TEAM2_SCORE=27,
+// STAT_TEAM3_SCORE=31. Vanilla Q2 uses different indices but its MVD streams
+// never set these, so decoding them with AQtion's layout is a no-op there.
 export enum Stat {
     Layouts = 13,
     Frags = 14,
-    Team1Score = 25,
-    Team2Score = 26,
-    Team3Score = 30,
+    Team1Score = 26,
+    Team2Score = 27,
+    Team3Score = 31,
 }
 
 // Client connection states
