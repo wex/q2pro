@@ -1,5 +1,10 @@
+import * as http from 'node:http';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { MvdClient } from './index';
 import { MvdFrameParser, PlayerState } from './frame';
+import { BspFile } from './bsp';
+import { generateMapSvg } from './map-render';
 
 const host = process.argv[2] || '127.0.0.1';
 const port = parseInt(process.argv[3] || '27910', 10);
@@ -113,12 +118,137 @@ client.on('close', () => {
     console.log('[close] Connection closed');
 });
 
+// ── SSE client management ───────────────────────────────────────
+
+const sseClients = new Set<http.ServerResponse>();
+
+function sseBroadcast(event: string, data: unknown): void {
+    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const res of sseClients) {
+        res.write(payload);
+    }
+}
+
+// Broadcast player state on every frame
+const origOnFrame = parser.onFrame;
+parser.onFrame = (ev) => {
+    origOnFrame?.(ev);
+    sseBroadcast('frame', {
+        frameNumber: ev.frameNumber,
+        players: ev.players.map((p) => {
+            const pos = MvdFrameParser.originToWorld(p.origin);
+            return {
+                number: p.number,
+                origin: pos,
+                viewangles: p.viewangles,
+                fov: p.fov,
+                gunindex: p.gunindex,
+            };
+        }),
+    });
+};
+
+const origOnServerData = parser.onServerData;
+parser.onServerData = (ev) => {
+    origOnServerData?.(ev);
+    const cs: Record<number, string> = {};
+    for (const [k, v] of ev.configstrings) cs[k] = v;
+    sseBroadcast('serverdata', {
+        protocol: ev.protocol,
+        version: ev.version,
+        flags: ev.flags,
+        gamedir: ev.gamedir,
+        clientNum: ev.clientNum,
+        configstrings: cs,
+    });
+};
+
+const origOnConfigString = parser.onConfigString;
+parser.onConfigString = (ev) => {
+    origOnConfigString?.(ev);
+    sseBroadcast('configstring', ev);
+};
+
+// ── HTTP server ─────────────────────────────────────────────────
+
+const MAPS_DIR = path.resolve(__dirname, '..', 'maps');
+const HTTP_PORT = parseInt(process.env.HTTP_PORT || '8080', 10);
+
+const bspCache = new Map<string, BspFile>();
+
+function loadBsp(mapName: string): BspFile | null {
+    if (bspCache.has(mapName)) return bspCache.get(mapName)!;
+    const filePath = path.join(MAPS_DIR, `${mapName}.bsp`);
+    if (!fs.existsSync(filePath)) return null;
+    const bsp = BspFile.loadFile(filePath);
+    bspCache.set(mapName, bsp);
+    return bsp;
+}
+
+const httpServer = http.createServer((req, res) => {
+    const url = new URL(req.url || '/', `http://${req.headers.host}`);
+
+    // GET /maps/{mapname}
+    const mapMatch = url.pathname.match(/^\/maps\/([\w.-]+)$/);
+    if (mapMatch) {
+        const mapName = mapMatch[1];
+        const bsp = loadBsp(mapName);
+        if (!bsp) {
+            res.writeHead(404, { 'Content-Type': 'text/plain' });
+            res.end(`Map not found: ${mapName}`);
+            return;
+        }
+        try {
+            const svg = generateMapSvg(bsp, mapName, { showGrid: url.searchParams.has('grid') });
+            res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
+            res.end(svg);
+        } catch (err: any) {
+            res.writeHead(500, { 'Content-Type': 'text/plain' });
+            res.end(`Error rendering map: ${err.message}`);
+        }
+        return;
+    }
+
+    // GET /events (SSE)
+    if (url.pathname === '/events') {
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+        });
+        res.write('\n');
+
+        // Send current state snapshot
+        const cs: Record<number, string> = {};
+        for (const [k, v] of configstrings) cs[k] = v;
+        const ps = Array.from(players.values()).map((p) => {
+            const pos = MvdFrameParser.originToWorld(p.origin);
+            return { number: p.number, origin: pos, viewangles: p.viewangles, fov: p.fov, gunindex: p.gunindex };
+        });
+        res.write(`event: snapshot\ndata: ${JSON.stringify({ configstrings: cs, players: ps })}\n\n`);
+
+        sseClients.add(res);
+        req.on('close', () => sseClients.delete(res));
+        return;
+    }
+
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not found');
+});
+
+httpServer.listen(HTTP_PORT, () => {
+    console.log(`[http] Listening on http://localhost:${HTTP_PORT}`);
+    console.log(`[http]   GET /maps/{name}  — SVG map render`);
+    console.log(`[http]   GET /events       — SSE stream`);
+});
+
 console.log(`Connecting to ${host}:${port}...`);
 client.connect();
 
 // Graceful shutdown
 process.on('SIGINT', () => {
     console.log('\nDisconnecting...');
+    httpServer.close();
     client.disconnect();
     process.exit(0);
 });

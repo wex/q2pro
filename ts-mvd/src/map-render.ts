@@ -4,7 +4,7 @@ import {
   BspFile,
   SURF_NODRAW, SURF_SKIP,
   type Vec3,
-} from './bsp.js';
+} from './bsp';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────────────────
 
