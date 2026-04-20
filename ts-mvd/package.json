@@ -9,8 +9,11 @@
     "example": "ts-node src/example.ts"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
+    "@types/node": "^20.11.0",
     "ts-node": "^10.9.0",
-    "@types/node": "^20.11.0"
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "tsx": "^4.21.0"
   }
 }
