@@ -48,6 +48,92 @@ const TEAM_COLOURS = [
 ];
 const DEFAULT_COLOUR = { fill: 'rgba(140, 140, 140, 0.85)', stroke: 'rgba(200, 200, 200, 0.9)', cone: 'rgba(140, 140, 140, 0.3)', coneStroke: 'rgba(140, 140, 140, 0.6)' };
 
+// ─── Shot traces ─────────────────────────────────────────────────────────────
+
+const TRACE_TTL_MS = 500;
+const TRACE_MAX = 256;
+const TRACE_INFER_MAX_DIST = 4000;   // world units; reject matches beyond this
+const TRACE_HIT_BIAS_MS = 300;       // recent onHit attackers preferred
+
+// Two-point (exact) TE types — start is the muzzle, endPosition is the impact.
+const TE_TWO_POINT = new Set([3 /*RailTrail*/, 11 /*BubbleTrail*/, 23 /*BfgLaser*/, 27 /*BlueHyper*/]);
+// Single-point bullet-style impacts — shooter must be inferred.
+const TE_BULLET = new Set([0 /*Gunshot*/, 4 /*Shotgun*/, 9 /*Sparks*/, 14 /*BulletSparks*/]);
+
+const traces = [];           // { x0, y0, x1, y1, team, t0 }
+const recentHitAttackers = []; // { clientNum, t }
+
+function rememberHitAttacker(num) {
+    const now = performance.now();
+    recentHitAttackers.push({ clientNum: num, t: now });
+    // Trim old ones.
+    const cutoff = now - TRACE_HIT_BIAS_MS;
+    while (recentHitAttackers.length && recentHitAttackers[0].t < cutoff) {
+        recentHitAttackers.shift();
+    }
+}
+
+function inferShooter(impact) {
+    const maxclients = maxclientsCache;
+    let best = null;
+    let bestScore = Infinity;
+
+    const now = performance.now();
+    const biasCutoff = now - TRACE_HIT_BIAS_MS;
+    const biasSet = new Set();
+    for (const h of recentHitAttackers) {
+        if (h.t >= biasCutoff) biasSet.add(h.clientNum);
+    }
+
+    for (const ent of players) {
+        if (ent.number < 0 || ent.number >= maxclients) continue;
+        const dx = impact[0] - ent.origin[0];
+        const dy = impact[1] - ent.origin[1];
+        const dist = Math.hypot(dx, dy);
+        if (dist > TRACE_INFER_MAX_DIST) continue;
+        // Angular misalignment between player's yaw-forward and the vector
+        // toward the impact. Top-down projection, so pitch is ignored.
+        const yawRad = -ent.viewangles[1] * (Math.PI / 180);
+        const fx = Math.cos(yawRad);
+        const fy = Math.sin(yawRad);
+        const invDist = dist > 0 ? 1 / dist : 0;
+        const dot = (dx * fx + dy * fy) * invDist; // cos(theta)
+        const angPenalty = (1 - dot) * 1500;       // 0..3000 world-unit equivalent
+        let score = dist + angPenalty;
+        if (biasSet.has(ent.number)) score *= 0.4; // strong preference
+        if (score < bestScore) {
+            bestScore = score;
+            best = ent;
+        }
+    }
+    return best;
+}
+
+function pushTrace(start, end, team) {
+    traces.push({
+        x0: start[0], y0: start[1],
+        x1: end[0], y1: end[1],
+        team: team,
+        t0: performance.now(),
+    });
+    if (traces.length > TRACE_MAX) traces.splice(0, traces.length - TRACE_MAX);
+    scheduleRender(PLAYERS_DIRTY);
+}
+
+function nearestPlayerTeam(pos) {
+    const maxclients = maxclientsCache;
+    const teamMap = getTeamMap();
+    let best = null;
+    let bestDist = Infinity;
+    for (const ent of players) {
+        if (ent.number < 0 || ent.number >= maxclients) continue;
+        const d = Math.hypot(pos[0] - ent.origin[0], pos[1] - ent.origin[1]);
+        if (d < bestDist) { bestDist = d; best = ent; }
+    }
+    if (!best) return undefined;
+    return teamMap[best.number];
+}
+
 // ─── Dirty-flag render scheduling ────────────────────────────────────────────
 
 const MAP_DIRTY = 1;
@@ -155,6 +241,32 @@ function renderPlayers() {
     applyWorldTransform(playersCtx);
 
     const ctx = playersCtx;
+
+    // Draw shot traces first, under the player icons. Expired ones are dropped.
+    const now = performance.now();
+    let aliveCount = 0;
+    for (let i = 0; i < traces.length; i++) {
+        const tr = traces[i];
+        const age = now - tr.t0;
+        if (age >= TRACE_TTL_MS) continue;
+        if (aliveCount !== i) traces[aliveCount] = tr;
+        aliveCount++;
+        const alpha = 1 - age / TRACE_TTL_MS;
+        const col = (tr.team !== undefined && tr.team < TEAM_COLOURS.length)
+            ? TEAM_COLOURS[tr.team] : DEFAULT_COLOUR;
+        const [sx0, sy0] = worldToSvg(tr.x0, tr.y0);
+        const [sx1, sy1] = worldToSvg(tr.x1, tr.y1);
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = col.stroke;
+        ctx.lineWidth = 2 / transform.scale;
+        ctx.beginPath();
+        ctx.moveTo(sx0, sy0);
+        ctx.lineTo(sx1, sy1);
+        ctx.stroke();
+    }
+    traces.length = aliveCount;
+    ctx.globalAlpha = 1;
+
     const r = 16;
     const fontSize = Math.max(8, r * 1.4);
     const nameFontSize = Math.max(10, r * 1.6);
@@ -215,6 +327,9 @@ function renderPlayers() {
         ctx.lineWidth = 1.5;
         ctx.stroke();
     }
+
+    // Keep the render loop ticking while any trace is still fading.
+    if (traces.length > 0) scheduleRender(PLAYERS_DIRTY);
 }
 
 // ─── Caches ──────────────────────────────────────────────────────────────────
@@ -661,6 +776,7 @@ function connectSSE() {
         const ev = JSON.parse(e.data);
         if (ev.kind === 'dealt' && typeof ev.attacker === 'number') {
             flashScoreboardRow(ev.attacker, 'hit-dealt');
+            rememberHitAttacker(ev.attacker);
         } else if (ev.kind === 'taken' && typeof ev.victim === 'number') {
             flashScoreboardRow(ev.victim, 'hit-taken');
         }
@@ -671,9 +787,23 @@ function connectSSE() {
         scoreboardState.layoutText = ev.text;
     });
 
-    es.addEventListener('te', () => {
-        // Temp-entity hit events are received; currently unused by this UI but
-        // available for richer visualisations in the future.
+    es.addEventListener('te', (e) => {
+        const ev = JSON.parse(e.data);
+        if (!ev || !ev.position) return;
+        const teamMap = getTeamMap();
+
+        if (TE_TWO_POINT.has(ev.type) && ev.endPosition) {
+            // Exact: muzzle → impact. Color from whoever is nearest the muzzle.
+            const team = nearestPlayerTeam(ev.position);
+            pushTrace(ev.position, ev.endPosition, team);
+            return;
+        }
+        if (TE_BULLET.has(ev.type)) {
+            const shooter = inferShooter(ev.position);
+            if (!shooter) return;
+            const team = teamMap[shooter.number];
+            pushTrace(shooter.origin, ev.position, team);
+        }
     });
 
     es.addEventListener('error', () => {

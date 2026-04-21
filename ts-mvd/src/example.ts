@@ -256,9 +256,19 @@ parser.onLayout = (ev: LayoutEvent) => {
 };
 
 parser.onTempEntity = (ev: TempEntityEvent) => {
-    // Only forward hit-like types — everything else is noisy visual FX.
-    const HIT_TYPES = new Set([0 /* Gunshot */, 1 /* Blood */, 4 /* Shotgun */, 9 /* Sparks */, 14 /* BulletSparks */, 26 /* GreenBlood */, 42 /* MoreBlood */]);
-    if (!HIT_TYPES.has(ev.type)) return;
+    // Forward shot-like types only: exact two-point weapons (rail/BFG/hyper/bubble)
+    // plus single-point bullet impacts whose shooter can be inferred on the client.
+    const SHOT_TYPES = new Set([
+        0,  // Gunshot
+        4,  // Shotgun
+        9,  // Sparks
+        14, // BulletSparks
+        3,  // RailTrail      (two-point)
+        11, // BubbleTrail    (two-point)
+        23, // BfgLaser       (two-point)
+        27, // BlueHyper      (two-point)
+    ]);
+    if (!SHOT_TYPES.has(ev.type)) return;
     sseBroadcast('te', ev);
 };
 

@@ -203,6 +203,10 @@ export interface TempEntityEvent {
     type: number;
     /** World-space position (undefined if not provided by the TE). */
     position?: [number, number, number];
+    /** Second world-space position for two-point TEs (rail trail, BFG laser,
+     *  hyperblaster trail, bubble trail). Represents the end/impact point
+     *  while `position` is the start/muzzle point. */
+    endPosition?: [number, number, number];
 }
 
 export interface StatsEvent {
@@ -907,8 +911,8 @@ export class MvdFrameParser {
             }
             if (POS_POS.includes(type)) {
                 const pos = this.readPos(r);
-                this.readPos(r);
-                this.onTempEntity?.({ type, position: pos });
+                const endPos = this.readPos(r);
+                this.onTempEntity?.({ type, position: pos, endPosition: endPos });
                 return true;
             }
         } catch {
