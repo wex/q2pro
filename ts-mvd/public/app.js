@@ -52,62 +52,11 @@ const DEFAULT_COLOUR = { fill: 'rgba(140, 140, 140, 0.85)', stroke: 'rgba(200, 2
 
 const TRACE_TTL_MS = 500;
 const TRACE_MAX = 256;
-const TRACE_INFER_MAX_DIST = 4000;   // world units; reject matches beyond this
-const TRACE_HIT_BIAS_MS = 300;       // recent onHit attackers preferred
 
 // Two-point (exact) TE types — start is the muzzle, endPosition is the impact.
 const TE_TWO_POINT = new Set([3 /*RailTrail*/, 11 /*BubbleTrail*/, 23 /*BfgLaser*/, 27 /*BlueHyper*/]);
-// Single-point bullet-style impacts — shooter must be inferred.
-const TE_BULLET = new Set([0 /*Gunshot*/, 4 /*Shotgun*/, 9 /*Sparks*/, 14 /*BulletSparks*/]);
 
-const traces = [];           // { x0, y0, x1, y1, team, t0 }
-const recentHitAttackers = []; // { clientNum, t }
-
-function rememberHitAttacker(num) {
-    const now = performance.now();
-    recentHitAttackers.push({ clientNum: num, t: now });
-    // Trim old ones.
-    const cutoff = now - TRACE_HIT_BIAS_MS;
-    while (recentHitAttackers.length && recentHitAttackers[0].t < cutoff) {
-        recentHitAttackers.shift();
-    }
-}
-
-function inferShooter(impact) {
-    const maxclients = maxclientsCache;
-    let best = null;
-    let bestScore = Infinity;
-
-    const now = performance.now();
-    const biasCutoff = now - TRACE_HIT_BIAS_MS;
-    const biasSet = new Set();
-    for (const h of recentHitAttackers) {
-        if (h.t >= biasCutoff) biasSet.add(h.clientNum);
-    }
-
-    for (const ent of players) {
-        if (ent.number < 0 || ent.number >= maxclients) continue;
-        const dx = impact[0] - ent.origin[0];
-        const dy = impact[1] - ent.origin[1];
-        const dist = Math.hypot(dx, dy);
-        if (dist > TRACE_INFER_MAX_DIST) continue;
-        // Angular misalignment between player's yaw-forward and the vector
-        // toward the impact. Top-down projection, so pitch is ignored.
-        const yawRad = -ent.viewangles[1] * (Math.PI / 180);
-        const fx = Math.cos(yawRad);
-        const fy = Math.sin(yawRad);
-        const invDist = dist > 0 ? 1 / dist : 0;
-        const dot = (dx * fx + dy * fy) * invDist; // cos(theta)
-        const angPenalty = (1 - dot) * 1500;       // 0..3000 world-unit equivalent
-        let score = dist + angPenalty;
-        if (biasSet.has(ent.number)) score *= 0.4; // strong preference
-        if (score < bestScore) {
-            bestScore = score;
-            best = ent;
-        }
-    }
-    return best;
-}
+const traces = []; // { x0, y0, x1, y1, team, t0 }
 
 function pushTrace(start, end, team) {
     traces.push({
@@ -776,7 +725,6 @@ function connectSSE() {
         const ev = JSON.parse(e.data);
         if (ev.kind === 'dealt' && typeof ev.attacker === 'number') {
             flashScoreboardRow(ev.attacker, 'hit-dealt');
-            rememberHitAttacker(ev.attacker);
         } else if (ev.kind === 'taken' && typeof ev.victim === 'number') {
             flashScoreboardRow(ev.victim, 'hit-taken');
         }
@@ -789,21 +737,11 @@ function connectSSE() {
 
     es.addEventListener('te', (e) => {
         const ev = JSON.parse(e.data);
-        if (!ev || !ev.position) return;
-        const teamMap = getTeamMap();
-
-        if (TE_TWO_POINT.has(ev.type) && ev.endPosition) {
-            // Exact: muzzle → impact. Color from whoever is nearest the muzzle.
-            const team = nearestPlayerTeam(ev.position);
-            pushTrace(ev.position, ev.endPosition, team);
-            return;
-        }
-        if (TE_BULLET.has(ev.type)) {
-            const shooter = inferShooter(ev.position);
-            if (!shooter) return;
-            const team = teamMap[shooter.number];
-            pushTrace(shooter.origin, ev.position, team);
-        }
+        if (!ev || !ev.position || !ev.endPosition) return;
+        if (!TE_TWO_POINT.has(ev.type)) return;
+        // Exact: muzzle → impact. Color from whoever is nearest the muzzle.
+        const team = nearestPlayerTeam(ev.position);
+        pushTrace(ev.position, ev.endPosition, team);
     });
 
     es.addEventListener('error', () => {

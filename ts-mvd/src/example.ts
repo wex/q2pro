@@ -238,7 +238,10 @@ parser.onObituary = (ev: ObituaryEvent) => {
     const entry: KillEntry = { ...ev, t: Date.now() };
     killFeed.push(entry);
     if (killFeed.length > KILL_FEED_MAX) killFeed.splice(0, killFeed.length - KILL_FEED_MAX);
-    console.log(`[kill] ${ev.raw}`);
+    // Strip control bytes (notably BEL 0x07, which Q2 embeds in obituaries
+    // as the in-game kill "ding") so the terminal does not ring.
+    const safe = ev.raw.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, '');
+    console.log(`[kill] ${safe}`);
     sseBroadcast('kill', entry);
 };
 
@@ -256,17 +259,13 @@ parser.onLayout = (ev: LayoutEvent) => {
 };
 
 parser.onTempEntity = (ev: TempEntityEvent) => {
-    // Forward shot-like types only: exact two-point weapons (rail/BFG/hyper/bubble)
-    // plus single-point bullet impacts whose shooter can be inferred on the client.
+    // Forward only two-point weapon TEs whose start + end positions are both
+    // present on the wire — no shooter inference is attempted for bullets.
     const SHOT_TYPES = new Set([
-        0,  // Gunshot
-        4,  // Shotgun
-        9,  // Sparks
-        14, // BulletSparks
-        3,  // RailTrail      (two-point)
-        11, // BubbleTrail    (two-point)
-        23, // BfgLaser       (two-point)
-        27, // BlueHyper      (two-point)
+        3,  // RailTrail
+        11, // BubbleTrail
+        23, // BfgLaser
+        27, // BlueHyper
     ]);
     if (!SHOT_TYPES.has(ev.type)) return;
     sseBroadcast('te', ev);
