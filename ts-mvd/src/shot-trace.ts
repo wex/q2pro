@@ -28,12 +28,23 @@ const TWO_POINT_TYPES: ReadonlySet<number> = new Set<number>([
     TempEntityType.BubbleTrail,
 ]);
 
-/** Single-point bullet TEs. Shooter is resolved from recent hit events. */
+/** Single-point bullet TEs (wall/prop impacts). Shooter is resolved from a
+ *  recent muzzleflash or hit event. */
 const BULLET_TYPES: ReadonlySet<number> = new Set<number>([
     TempEntityType.Gunshot,
     TempEntityType.Shotgun,
     TempEntityType.BulletSparks,
     TempEntityType.Sparks,
+    TempEntityType.Blaster,
+]);
+
+/** Single-point blood TEs (player impacts). AQ2 `fire_lead`/`fire_lead_ap`
+ *  writes these instead of a bullet TE when the shot strikes a player.
+ *  Shooter is resolved from the most recent muzzleflash within the window. */
+const BLOOD_TYPES: ReadonlySet<number> = new Set<number>([
+    TempEntityType.Blood,
+    TempEntityType.GreenBlood,
+    TempEntityType.MoreBlood,
 ]);
 
 export interface ShotTraceOptions {
@@ -41,6 +52,11 @@ export interface ShotTraceOptions {
     muzzleMaxDist?: number;
     /** Hit-event correlation window (ms) for single-point bullet TEs. */
     hitWindowMs?: number;
+    /** Muzzleflash correlation window (ms) for single-point / blood TEs.
+     *  Hitscan weapons fire in the same tick the TE is emitted, so this can
+     *  be tight (default 200 ms). Kept shorter than `hitWindowMs` so rocket
+     *  / grenade radius blood doesn't latch onto an earlier bullet shooter. */
+    muzzleFlashWindowMs?: number;
     /** Injectable clock; defaults to Date.now. */
     now?: () => number;
 }
@@ -53,14 +69,17 @@ export interface ShotTraceOptions {
 export class ShotTraceResolver {
     private readonly muzzleMaxDist: number;
     private readonly hitWindowMs: number;
+    private readonly muzzleFlashWindowMs: number;
     private readonly now: () => number;
 
     private players: ReadonlyMap<number, PlayerState> | null = null;
     private readonly recentHits: { attacker: number; t: number }[] = [];
+    private readonly recentFlashes: { attacker: number; t: number }[] = [];
 
     constructor(opts: ShotTraceOptions = {}) {
         this.muzzleMaxDist = opts.muzzleMaxDist ?? 4000;
         this.hitWindowMs = opts.hitWindowMs ?? 250;
+        this.muzzleFlashWindowMs = opts.muzzleFlashWindowMs ?? 200;
         this.now = opts.now ?? Date.now;
     }
 
@@ -68,6 +87,20 @@ export class ShotTraceResolver {
     noteHit(attacker: number, t: number = this.now()): void {
         this.recentHits.push({ attacker, t });
         this.evictOldHits(t);
+    }
+
+    /**
+     * Record a muzzleflash event. `entity` is the shooter's edict number
+     * (1..max_edicts); the attacker's clientNum is `entity - 1`. Hitscan
+     * weapons fire, emit the TE, and send the muzzleflash within the same
+     * server tick, so this is the most reliable attribution source and does
+     * not depend on unicast prints (which Q2Pro filters by default via
+     * `sv_mvd_nomsgs`).
+     */
+    noteMuzzleFlash(entity: number, t: number = this.now()): void {
+        if (entity <= 0) return;
+        this.recentFlashes.push({ attacker: entity - 1, t });
+        this.evictOldFlashes(t);
     }
 
     /**
@@ -79,10 +112,11 @@ export class ShotTraceResolver {
         this.players = map;
     }
 
-    /** Clear recent hits and the player reference. */
+    /** Clear recent hits, flashes, and the player reference. */
     reset(): void {
         this.players = null;
         this.recentHits.length = 0;
+        this.recentFlashes.length = 0;
     }
 
     /**
@@ -115,7 +149,56 @@ export class ShotTraceResolver {
             };
         }
 
+        if (BLOOD_TYPES.has(ev.type)) {
+            if (!ev.position) return null;
+            // Player-hit blood TEs: attribute via the most recent muzzleflash.
+            // Unicast "You hit X" prints are filtered from MVD streams by
+            // default (sv_mvd_nomsgs=1 in Q2Pro), so `noteHit` is not a
+            // reliable fallback here. Emit a two-point line from the
+            // shooter's current origin to the blood impact.
+            const shooter = this.findRecentFlash(now);
+            if (shooter === undefined) return null;
+            const start = this.playerWorldOrigin(shooter);
+            if (!start) return null;
+            return {
+                type: ev.type,
+                wireStart: start,
+                wireEnd: ev.position,
+                shooter,
+                t: now,
+            };
+        }
+
         return null;
+    }
+
+    /**
+     * Build a synthetic two-point shot from a hit event. Used for bullet
+     * weapons (sniper / pistols / MP5 / M4 / HC) where AQ2's fire_lead emits
+     * no bullet TE when the round strikes a player — `T_Damage` writes
+     * `TE_BLOOD` instead, which we don't visualize. Callers supply both
+     * clientNums; this method resolves their current world-space origins
+     * from the live player map.
+     *
+     * Returns null if either player is missing, inactive, or the player
+     * reference has not been set. The returned `ShotEvent` carries
+     * `TempEntityType.Gunshot` as a generic single-point id plus both
+     * `wireStart` and `wireEnd`; downstream consumers should treat any
+     * `wireEnd`-bearing event as a two-point line.
+     */
+    handleHit(attackerClientNum: number, victimClientNum: number): ShotEvent | null {
+        if (!this.players) return null;
+        const attackerOrigin = this.playerWorldOrigin(attackerClientNum);
+        if (!attackerOrigin) return null;
+        const victimOrigin = this.playerWorldOrigin(victimClientNum);
+        if (!victimOrigin) return null;
+        return {
+            type: TempEntityType.Gunshot,
+            wireStart: attackerOrigin,
+            wireEnd: victimOrigin,
+            shooter: attackerClientNum,
+            t: this.now(),
+        };
     }
 
     // ── internals ───────────────────────────────────────────────────
@@ -134,10 +217,39 @@ export class ShotTraceResolver {
     }
 
     private findRecentAttacker(now: number): number | undefined {
+        // Prefer muzzleflash (multicast, always present) over hit prints
+        // (unicast, filtered out by sv_mvd_nomsgs=1 by default in Q2Pro).
+        const flash = this.findRecentFlash(now);
+        if (flash !== undefined) return flash;
         this.evictOldHits(now);
         if (this.recentHits.length === 0) return undefined;
-        // Most recent wins.
         return this.recentHits[this.recentHits.length - 1].attacker;
+    }
+
+    private findRecentFlash(now: number): number | undefined {
+        this.evictOldFlashes(now);
+        if (this.recentFlashes.length === 0) return undefined;
+        return this.recentFlashes[this.recentFlashes.length - 1].attacker;
+    }
+
+    private evictOldFlashes(now: number): void {
+        const cutoff = now - this.muzzleFlashWindowMs;
+        let write = 0;
+        for (let read = 0; read < this.recentFlashes.length; read++) {
+            const h = this.recentFlashes[read];
+            if (h.t >= cutoff) {
+                if (write !== read) this.recentFlashes[write] = h;
+                write++;
+            }
+        }
+        this.recentFlashes.length = write;
+    }
+
+    private playerWorldOrigin(clientNum: number): [number, number, number] | undefined {
+        if (!this.players) return undefined;
+        const p = this.players.get(clientNum);
+        if (!p || !p.inUse) return undefined;
+        return MvdFrameParser.originToWorld(p.origin);
     }
 
     private findNearestPlayer(muzzle: [number, number, number]): number | undefined {

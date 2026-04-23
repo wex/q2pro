@@ -214,6 +214,17 @@ export interface StatsEvent {
     stats: Int16Array;
 }
 
+export interface MuzzleFlashEvent {
+    /** Shooter edict number (1..max_edicts). Player clientNum = entity - 1. */
+    entity: number;
+    /** MZ_* weapon flash id (see shared.h). Low 7 bits; the silenced bit is
+     *  surfaced separately. */
+    weapon: number;
+    /** True for svc_muzzleflash (player flashes); false for svc_muzzleflash2
+     *  (monster/entity flashes). */
+    silenced: boolean;
+}
+
 // ── Frame parser ────────────────────────────────────────────────────
 
 export class MvdFrameParser {
@@ -252,6 +263,7 @@ export class MvdFrameParser {
     onCenterPrint: ((event: CenterPrintEvent) => void) | null = null;
     onTempEntity: ((event: TempEntityEvent) => void) | null = null;
     onStats: ((event: StatsEvent) => void) | null = null;
+    onMuzzleFlash: ((event: MuzzleFlashEvent) => void) | null = null;
 
     /**
      * Feed a raw MVD stream data buffer (the payload from GTS_STREAM_DATA).
@@ -808,6 +820,10 @@ export class MvdFrameParser {
                 case SvcOp.TempEntity:
                     if (!this.parseTempEntity(r)) return;
                     break;
+                case SvcOp.MuzzleFlash:
+                case SvcOp.MuzzleFlash2:
+                    if (!this.parseMuzzleFlash(r, op === SvcOp.MuzzleFlash)) return;
+                    break;
                 case SvcOp.StuffText:
                     // [string] — swallow and continue; harmless for observers.
                     r.readString();
@@ -860,6 +876,32 @@ export class MvdFrameParser {
                 this.onHitTaken?.({ victim: clientNum, attacker: taken.attacker, raw: taken.raw });
             }
         }
+    }
+
+    // ── Muzzle-flash parsing ────────────────────────────────────────
+
+    /**
+     * `svc_muzzleflash` / `svc_muzzleflash2` carry `[entity u16][weapon u8]`.
+     * For the non-silenced variant under the extended protocol, the upper
+     * bits of `entity` are folded into `weapon` (see CL_ParseMuzzleFlashPacket
+     * in src/client/parse.c). We mask back out here so `entity` is a clean
+     * edict number. Returns false if the reader cannot supply 3 bytes.
+     */
+    private parseMuzzleFlash(r: BufferReader, isPlayerFlash: boolean): boolean {
+        if (r.remaining < 3) return false;
+        let entity = r.readUInt16LE();
+        let weapon = r.readUInt8();
+        if (!isPlayerFlash && this.extended) {
+            weapon |= (entity >>> 13) << 8;
+            entity &= 0x1fff;
+        }
+        const silenced = isPlayerFlash && (weapon & 0x80) !== 0;
+        this.onMuzzleFlash?.({
+            entity,
+            weapon: weapon & 0x7f,
+            silenced,
+        });
+        return true;
     }
 
     // ── Temp-entity parsing (enough to surface hit events) ──────────
@@ -1087,7 +1129,7 @@ function stripTrailingNewline(s: string): string {
  *   "You hit NAME in the body\n"
  *   "You hit your TEAMMATE NAME!\n"
  */
-function classifyHit(text: string): { victim: string; location: string; raw: string } | null {
+export function classifyHit(text: string): { victim: string; location: string; raw: string } | null {
     const raw = stripTrailingNewline(text);
     let m = raw.match(/^You hit (.+?) in the (head|chest|stomach|legs|body)\b/);
     if (m) return { victim: m[1], location: m[2], raw };
@@ -1095,6 +1137,12 @@ function classifyHit(text: string): { victim: string; location: string; raw: str
     if (m) return { victim: m[1], location: 'body', raw };
     m = raw.match(/^You hit (.+?)'s .* from /); // disarm
     if (m) return { victim: m[1], location: 'weapon', raw };
+    // Kevlar helmet head shots (victim has a helmet). AQ2 emits these to the
+    // attacker instead of "You hit X in the head" when the helmet absorbs.
+    //   "NAME has a Kevlar Helmet, too bad you have AP rounds..." (sniper AP)
+    //   "NAME has a Kevlar Helmet - AIM FOR THE BODY!"           (other bullets)
+    m = raw.match(/^(.+?) has a Kevlar Helmet\b/);
+    if (m) return { victim: m[1], location: 'head', raw };
     return null;
 }
 

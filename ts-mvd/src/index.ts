@@ -46,6 +46,7 @@ export {
     CenterPrintEvent,
     TempEntityEvent,
     StatsEvent,
+    MuzzleFlashEvent,
 } from './frame';
 export {
     ShotTraceResolver,

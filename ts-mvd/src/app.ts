@@ -13,6 +13,7 @@ import {
     HitEvent,
     HitTakenEvent,
     LayoutEvent,
+    MuzzleFlashEvent,
     TempEntityEvent,
     TeamScores,
 } from './frame';
@@ -48,6 +49,31 @@ const players = new Map<number, PlayerState>();
 
 const shotTrace = new ShotTraceResolver();
 shotTrace.notePlayers(players);
+
+// Configstring slots holding "name\skin" for each player. Mirrors
+// `CS_PLAYERSKINS_OLD` / `CS_PLAYERSKINS_EXT` from the vanilla / extended
+// Q2 protocol, matching the lookup already used in public/app.js.
+const CS_PLAYERSKINS_OLD = 1312;
+const CS_PLAYERSKINS_EXT = 12862;
+const MAX_CLIENTS = 256;
+
+/**
+ * Resolve a player's clientNum by their in-game name using the
+ * CS_PLAYERSKINS configstrings. Returns undefined if no player entry
+ * matches. Names are matched exactly; AQ2 forbids duplicate netnames
+ * at join time so collisions are unexpected.
+ */
+function resolveClientByName(name: string): number | undefined {
+    for (let i = 0; i < MAX_CLIENTS; i++) {
+        const cs = configstrings.get(CS_PLAYERSKINS_EXT + i)
+            ?? configstrings.get(CS_PLAYERSKINS_OLD + i);
+        if (!cs) continue;
+        const sep = cs.indexOf('\\');
+        const csName = sep === -1 ? cs : cs.slice(0, sep);
+        if (csName === name) return i;
+    }
+    return undefined;
+}
 
 // ── Chat / kill-feed / scoreboard state ─────────────────────────
 
@@ -264,6 +290,16 @@ parser.onObituary = (ev: ObituaryEvent) => {
 parser.onHit = (ev: HitEvent) => {
     shotTrace.noteHit(ev.attacker);
     sseBroadcast('hit', { kind: 'dealt', ...ev });
+
+    // Best-effort synthetic trace from the "You hit NAME" print. This only
+    // fires on servers with `sv_mvd_nomsgs=0`; the default is 1, which
+    // filters these unicast prints out of the MVD stream. The primary
+    // mechanism is muzzleflash + blood-TE correlation — see
+    // `parser.onMuzzleFlash` and `ShotTraceResolver.handleTE`.
+    const victim = resolveClientByName(ev.victim);
+    if (victim === undefined) return;
+    const shot = shotTrace.handleHit(ev.attacker, victim);
+    if (shot) sseBroadcast('shot', shot);
 };
 
 parser.onHitTaken = (ev: HitTakenEvent) => {
@@ -278,6 +314,10 @@ parser.onLayout = (ev: LayoutEvent) => {
 parser.onTempEntity = (ev: TempEntityEvent) => {
     const shot = shotTrace.handleTE(ev);
     if (shot) sseBroadcast('shot', shot);
+};
+
+parser.onMuzzleFlash = (ev: MuzzleFlashEvent) => {
+    shotTrace.noteMuzzleFlash(ev.entity);
 };
 
 // ── OOB status polling via UDP ───────────────────────────────────

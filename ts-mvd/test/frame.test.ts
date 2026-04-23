@@ -1,5 +1,5 @@
 import { MvdDemoReader } from '../src/demo';
-import { MvdFrameParser, FrameEvent, ServerDataEvent, ConfigStringEvent, ChatEvent, ObituaryEvent } from '../src/frame';
+import { MvdFrameParser, FrameEvent, ServerDataEvent, ConfigStringEvent, ChatEvent, ObituaryEvent, classifyHit } from '../src/frame';
 import { readDemoBytes } from './helpers/fixtures';
 
 interface ParseResult {
@@ -105,6 +105,38 @@ describe('MvdFrameParser against demo.mvd2', () => {
 describe('MvdFrameParser misc', () => {
     test('originToWorld scales by 1/8', () => {
         expect(MvdFrameParser.originToWorld([8, 16, -8])).toEqual([1, 2, -1]);
+    });
+
+    test('classifyHit recognizes AQ2 location hit prints', () => {
+        expect(classifyHit('You hit Alice in the head\n'))
+            .toEqual({ victim: 'Alice', location: 'head', raw: 'You hit Alice in the head' });
+        expect(classifyHit('You hit Bob in the legs\n'))
+            .toEqual({ victim: 'Bob', location: 'legs', raw: 'You hit Bob in the legs' });
+        expect(classifyHit('You hit your TEAMMATE Charlie!\n'))
+            .toEqual({ victim: 'Charlie', location: 'body', raw: 'You hit your TEAMMATE Charlie!' });
+    });
+
+    test('classifyHit recognizes kevlar-helmet absorbed hits', () => {
+        // Sniper AP round into a helmet (still bleeds, still a hit).
+        expect(classifyHit('Alice has a Kevlar Helmet, too bad you have AP rounds...\n'))
+            .toEqual({
+                victim: 'Alice',
+                location: 'head',
+                raw: 'Alice has a Kevlar Helmet, too bad you have AP rounds...',
+            });
+        // Non-AP bullet into a helmet.
+        expect(classifyHit('Bob has a Kevlar Helmet - AIM FOR THE BODY!\n'))
+            .toEqual({
+                victim: 'Bob',
+                location: 'head',
+                raw: 'Bob has a Kevlar Helmet - AIM FOR THE BODY!',
+            });
+    });
+
+    test('classifyHit returns null on unrelated prints', () => {
+        expect(classifyHit('Head damage\n')).toBeNull();
+        expect(classifyHit('You were hit by Alice, your TEAMMATE!\n')).toBeNull();
+        expect(classifyHit('')).toBeNull();
     });
 
     test('malformed input throws, reset() restores a usable parser', () => {

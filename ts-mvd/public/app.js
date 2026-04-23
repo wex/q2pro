@@ -63,9 +63,6 @@ const DEFAULT_COLOUR = { fill: 'rgba(140, 140, 140, 0.85)', stroke: 'rgba(200, 2
 const TRACE_TTL_MS = 500;
 const TRACE_MAX = 256;
 
-// Two-point (exact) TE types — wireStart is the muzzle, wireEnd is the impact.
-const TE_TWO_POINT = new Set([3 /*RailTrail*/, 11 /*BubbleTrail*/, 23 /*BfgLaser*/, 27 /*BlueHyper*/]);
-
 // When true, two-point traces start at the resolved shooter's player origin
 // rather than the raw muzzle position. Produces cleaner top-down lines.
 const USE_SHOOTER_ORIGIN_AS_START = true;
@@ -95,8 +92,10 @@ function handleShot(ev) {
     const teamMap = getTeamMap();
     const team = (typeof ev.shooter === 'number') ? teamMap[ev.shooter] : undefined;
 
-    if (ev.wireEnd && TE_TWO_POINT.has(ev.type)) {
-        // Two-point weapon trace: muzzle → impact.
+    if (ev.wireEnd) {
+        // Two-point trace: muzzle → impact (wall hits) or shooter → victim
+        // (synthetic traces emitted by the server for player-hit bullets
+        // where AQ2 writes no bullet TE).
         let start = ev.wireStart;
         if (USE_SHOOTER_ORIGIN_AS_START && typeof ev.shooter === 'number') {
             const o = playerOrigin(ev.shooter);
