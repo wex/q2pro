@@ -802,8 +802,11 @@ function appendKillfeed(ev) {
     if (ev.attacker) {
         const wep = ev.weapon ? ` <span class="weapon">[${escapeHtml(ev.weapon)}]</span>` : '';
         li.innerHTML = `<span class="attacker">${escapeHtml(ev.attacker)}</span> \u2192 <span class="victim">${escapeHtml(ev.victim)}</span>${wep}`;
-    } else {
+    } else if (ev.victim) {
         li.innerHTML = `<span class="victim">${escapeHtml(ev.victim)}</span> <span class="world">${escapeHtml(ev.weapon || 'died')}</span>`;
+    } else {
+        // Raw-only fallback for unknown obituary templates (AQ2/Action mods).
+        li.innerHTML = `<span class="world">${escapeHtml(ev.raw || '')}</span>`;
     }
     elKillfeed.appendChild(li);
     while (elKillfeed.children.length > KILL_FEED_VISIBLE) {

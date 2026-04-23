@@ -93,6 +93,27 @@ redundant `onChat` events without having to maintain their own dedup
 state. `example.ts`'s `chatLog` now contains one entry per chat line
 regardless of how many players are on the server.
 
+## ASCII filter
+
+`classifyChat` (in `ts-mvd/src/frame.ts`) also strips every byte outside the
+printable ANSI range (codepoints `0x20`..`0x80`) before splitting the
+`name: text` prefix. Q2 embeds BEL (`0x07`) as a chat "ding" and uses
+high-bit bytes for green / coloured name decorations; surfacing those
+verbatim in the browser caused stray control characters and mojibake in
+the chat panel. The filter is applied both to the name portion and the
+body, and the cleaned string is what ends up in `ChatEvent.raw` /
+`ChatEvent.text`.
+
+## Obituary raw-only fallback
+
+`classifyObituary` previously returned `null` when no vanilla/TNG death
+template matched, which silenced every AQ2/Action mod obituary (e.g.
+`"VICTIM has a hole in his head from ATTACKER's Mark 23 pistol"`) and
+left the UI kill feed empty. It now falls back to a raw-only event
+`{ victim: '', attacker: null, weapon: null, raw }` so unknown templates
+still surface. UI consumers should treat `victim === ''` as "render the
+raw line verbatim"; `public/app.js` does this in `appendKillfeed`.
+
 ## Non-goals
 
 - Deduplicating `onChat` across frame boundaries (e.g. identical

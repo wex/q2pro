@@ -1,5 +1,5 @@
 import { MvdDemoReader } from '../src/demo';
-import { MvdFrameParser, FrameEvent, ServerDataEvent, ConfigStringEvent, ChatEvent, ObituaryEvent, classifyHit } from '../src/frame';
+import { MvdFrameParser, FrameEvent, ServerDataEvent, ConfigStringEvent, ChatEvent, ObituaryEvent, classifyHit, classifyChat, classifyObituary } from '../src/frame';
 import { readDemoBytes } from './helpers/fixtures';
 
 interface ParseResult {
@@ -137,6 +137,44 @@ describe('MvdFrameParser misc', () => {
         expect(classifyHit('Head damage\n')).toBeNull();
         expect(classifyHit('You were hit by Alice, your TEAMMATE!\n')).toBeNull();
         expect(classifyHit('')).toBeNull();
+    });
+
+    test('classifyObituary matches vanilla Q2 templates', () => {
+        expect(classifyObituary('Alice killed himself\n')).toEqual({
+            victim: 'Alice', attacker: null, weapon: 'suicide', raw: 'Alice killed himself',
+        });
+        expect(classifyObituary('Bob was blasted by Charlie\n')).toEqual({
+            victim: 'Bob', attacker: 'Charlie', weapon: null, raw: 'Bob was blasted by Charlie',
+        });
+    });
+
+    test('classifyObituary returns raw-only fallback for unknown templates', () => {
+        // AQ2/Action death line — no vanilla template matches.
+        const raw = "Alice has a hole in his head from Bob's Mark 23 pistol";
+        expect(classifyObituary(raw + '\n')).toEqual({
+            victim: '', attacker: null, weapon: null, raw,
+        });
+
+        // Another AQ2 line that looked like suicide before but wasn't caught.
+        const raw2 = 'Alice ate too much glass';
+        expect(classifyObituary(raw2 + '\n')).toEqual({
+            victim: '', attacker: null, weapon: null, raw: raw2,
+        });
+    });
+
+    test('classifyChat strips non-ASCII and high-bit bytes', () => {
+        // BEL (0x07) ding + high-bit coloured characters.
+        expect(classifyChat('nick\x07: hi\xB0there\n')).toEqual({
+            name: 'nick', text: 'hithere', raw: 'nick: hithere',
+        });
+        // System line (no "name: " prefix) with control bytes stripped.
+        expect(classifyChat('\x01server restart\x00\n')).toEqual({
+            name: '', text: 'server restart', raw: 'server restart',
+        });
+        // Pure ASCII chat passes through untouched.
+        expect(classifyChat('Alice: hello world\n')).toEqual({
+            name: 'Alice', text: 'hello world', raw: 'Alice: hello world',
+        });
     });
 
     test('malformed input throws, reset() restores a usable parser', () => {

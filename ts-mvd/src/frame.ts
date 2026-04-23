@@ -849,19 +849,12 @@ export class MvdFrameParser {
             }
             this.chatSeenThisTick.add(key);
 
-            const raw = text.replace(/\n+$/, '');
-            const sep = raw.indexOf(': ');
-            if (sep > 0) {
-                this.onChat?.({ name: raw.slice(0, sep), text: raw.slice(sep + 2), raw });
-            } else {
-                this.onChat?.({ name: '', text: raw, raw });
-            }
+            this.onChat?.(classifyChat(text));
             return;
         }
 
         if (level === PrintLevel.Medium) {
-            const ob = classifyObituary(text);
-            if (ob) this.onObituary?.(ob);
+            this.onObituary?.(classifyObituary(text));
             return;
         }
 
@@ -1158,10 +1151,33 @@ function classifyHitTaken(text: string): { attacker: string; raw: string } | nul
 }
 
 /**
+ * Normalize a PRINT_CHAT line into a `ChatEvent`.
+ *
+ * Q2 embeds BEL (0x07) as a chat "ding" and uses high-bit bytes for green /
+ * coloured text. Drop anything outside printable ASCII (codepoints 32..128)
+ * before splitting so the browser receives a clean string.
+ */
+export function classifyChat(text: string): ChatEvent {
+    const cleaned = text.replace(/[^\x20-\x80]/g, '');
+    const raw = cleaned.replace(/\n+$/, '');
+    const sep = raw.indexOf(': ');
+    if (sep > 0) {
+        return { name: raw.slice(0, sep), text: raw.slice(sep + 2), raw };
+    }
+    return { name: '', text: raw, raw };
+}
+
+/**
  * Parse a PRINT_MEDIUM broadcast obituary. Matches the common templates used
  * by vanilla Q2 and AQ2/TNG `ClientObituary`. Output is best-effort.
+ *
+ * When no template matches, returns a raw-only event (`victim === ''`,
+ * `attacker === null`, `weapon === null`). Consumers should treat that as
+ * "display the raw line verbatim" so unknown mod templates still surface in
+ * the kill feed. The previous behaviour of returning `null` hid every AQ2
+ * death line from the UI.
  */
-function classifyObituary(text: string): ObituaryEvent | null {
+export function classifyObituary(text: string): ObituaryEvent {
     const raw = stripTrailingNewline(text);
 
     // Suicides / world kills: "VICTIM killed himself", "VICTIM died."
@@ -1187,6 +1203,8 @@ function classifyObituary(text: string): ObituaryEvent | null {
     m = raw.match(/^(.+?) was (?:blasted|railed|nailed|bolted|killed) by (.+?)$/);
     if (m) return { victim: m[1], attacker: m[2], weapon: null, raw };
 
-    return null;
+    // Unknown template (e.g. AQ2/Action death lines). Surface the raw line so
+    // the UI can still render it. `victim === ''` is the contract for "raw only".
+    return { victim: '', attacker: null, weapon: null, raw };
 }
 
