@@ -6,7 +6,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "example": "ts-node src/example.ts"
+    "app": "ts-node src/app.ts"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
