@@ -19,7 +19,9 @@ Source lives in `ts-mvd/src/`:
 - `bsp.ts` — BSP map loader.
 - `wal.ts` — WAL texture loader.
 - `map-render.ts` — map visualization.
-- `example.ts` — runnable usage example.
+- `demo.ts` — `MvdDemoReader` for `.mvd2` replay files.
+- `texture-export.ts` — texture asset export helper.
+- `app.ts` — HTTP/UDP control surface wiring demo + client pipelines.
 - `index.ts` — public exports.
 - `ts-mvd/public/` — static assets for the browser demo (`index.html`, `app.js`, `app.css`).
 
@@ -35,19 +37,32 @@ See `doc/mvd-system.md` and `doc/network.md` for deep dives, and `ts-mvd/README.
 Run from `ts-mvd/`:
 - `npm install` — install dependencies.
 - `npm run build` — `tsc` compile to `dist/`.
-- `npm run example` — run `src/example.ts` via `ts-node`.
+- `npm run app` — run `src/app.ts` via `ts-node` (HTTP/UDP control surface).
+- `npm test` — run the Jest suite.
+- `npm run test:watch` — Jest in watch mode.
 
 Requires Node.js 20+ (matches `@types/node` ^20).
 
 ## Dependencies
-- Dev: `typescript` ^5.4, `ts-node` ^10.9, `@types/node` ^20.
+- Dev: `typescript` ^5.4, `ts-node` ^10.9, `@types/node` ^20, `jest` ^29, `ts-jest` ^29, `@types/jest` ^29, `supertest` ^7, `@types/supertest` ^7.
 - Runtime: `tsx` ^4.21.
 - Prefer versions already in `ts-mvd/package.json`; avoid adding dependencies without a clear reason.
 
 ## Testing & verification
-- No test framework is currently configured.
-- For any change, verify with `npm run build` (must pass `tsc`) and, where feasible, `npm run example` against a reachable Q2Pro GTV server.
-- When introducing tests, propose a framework choice before installing.
+The test runner is Jest with `ts-jest`. See `doc/testing.md` for the full guide.
+
+- Suites live in `ts-mvd/test/` matching `*.test.ts`: `buffer.test.ts`, `demo.test.ts`, `frame.test.ts`, `client.test.ts`, `app.test.ts`.
+- Shared fixtures in `ts-mvd/test/helpers/fixtures.ts` (exports `DEMO_PATH` and a `buildMvd2` synth helper). Replay tests use the bundled `ts-mvd/assets/demos/demo.mvd2` so no live Q2Pro server is needed.
+- Configs:
+  - `ts-mvd/jest.config.ts` — `ts-jest` preset, `testEnvironment: node`, `forceExit: true` (the `app` module owns long-lived UDP/HTTP handles).
+  - `ts-mvd/tsconfig.test.json` — extends `tsconfig.json`, adds `jest`/`node` types and widens `rootDir` so tests type-check alongside `src/`. The shipped `tsc` build still emits only from `src/`.
+- Conventions:
+  - Pure modules (`buffer`, `demo`, `frame`) are tested without mocks.
+  - `client.test.ts` mocks `net` with a `FakeSocket` extending `EventEmitter` to drive `connect`/`data`/`close` synchronously.
+  - `app.test.ts` uses `supertest` against the exported Express app and calls `resetAppStateForTests()` between cases; `httpServer.listen()` and `SIGINT` hooks are gated behind `require.main === module`.
+  - Demo-driven tests use `MvdDemoReader` with `realtime: false` and wait one `setImmediate` tick before asserting.
+- Adding tests: drop new `*.test.ts` files under `ts-mvd/test/`, reuse `fixtures.ts` helpers, and stop any long-lived timers in `afterEach` (or rely on `forceExit`).
+- Before opening a PR, run both `npm test` and `npm run build` from `ts-mvd/`. Where feasible, also smoke-test `npm run app` against a reachable Q2Pro GTV server.
 
 ## Workflow conventions
 - One feature per Git branch; branch name summarizes the feature.
@@ -66,3 +81,7 @@ Requires Node.js 20+ (matches `@types/node` ^20).
 - `ts-mvd/README.md` — user-facing API and events.
 - `doc/mvd-system.md` — MVD subsystem.
 - `doc/network.md` — wire protocol.
+- `doc/testing.md` — test suite layout, configs, and conventions.
+- `doc/demo-replay.md` — demo replay pipeline.
+- `doc/mvd2-demo-reader.md` — `.mvd2` reader details.
+- `doc/texture-export.md` — texture export tooling.
