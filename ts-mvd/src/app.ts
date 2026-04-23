@@ -18,6 +18,7 @@ import {
 } from './frame';
 import { BspFile } from './bsp';
 import { generateMapSvg } from './map-render';
+import { ShotTraceResolver } from './shot-trace';
 
 const defaultHost = process.argv[2] || '127.0.0.1';
 const defaultPort = parseInt(process.argv[3] || '27910', 10);
@@ -44,6 +45,9 @@ const parser = new MvdFrameParser();
 
 const configstrings = new Map<number, string>();
 const players = new Map<number, PlayerState>();
+
+const shotTrace = new ShotTraceResolver();
+shotTrace.notePlayers(players);
 
 // ── Chat / kill-feed / scoreboard state ─────────────────────────
 
@@ -258,6 +262,7 @@ parser.onObituary = (ev: ObituaryEvent) => {
 };
 
 parser.onHit = (ev: HitEvent) => {
+    shotTrace.noteHit(ev.attacker);
     sseBroadcast('hit', { kind: 'dealt', ...ev });
 };
 
@@ -271,16 +276,8 @@ parser.onLayout = (ev: LayoutEvent) => {
 };
 
 parser.onTempEntity = (ev: TempEntityEvent) => {
-    // Forward only two-point weapon TEs whose start + end positions are both
-    // present on the wire — no shooter inference is attempted for bullets.
-    const SHOT_TYPES = new Set([
-        3,  // RailTrail
-        11, // BubbleTrail
-        23, // BfgLaser
-        27, // BlueHyper
-    ]);
-    if (!SHOT_TYPES.has(ev.type)) return;
-    sseBroadcast('te', ev);
+    const shot = shotTrace.handleTE(ev);
+    if (shot) sseBroadcast('shot', shot);
 };
 
 // ── OOB status polling via UDP ───────────────────────────────────
@@ -362,6 +359,8 @@ function resetPipelineState(): void {
     parser.reset();
     configstrings.clear();
     players.clear();
+    shotTrace.reset();
+    shotTrace.notePlayers(players);
     chatLog.length = 0;
     killFeed.length = 0;
     scoreboard.teamScores = { team1: 0, team2: 0, team3: 0 };

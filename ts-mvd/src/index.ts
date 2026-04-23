@@ -47,3 +47,8 @@ export {
     TempEntityEvent,
     StatsEvent,
 } from './frame';
+export {
+    ShotTraceResolver,
+    ShotEvent,
+    ShotTraceOptions,
+} from './shot-trace';

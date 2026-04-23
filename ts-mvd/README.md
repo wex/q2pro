@@ -96,7 +96,8 @@ curl           http://localhost:8080/state
 curl           http://localhost:8080/demos
 ```
 
-See `doc/demo-replay.md` for the full endpoint and event reference.
+See `doc/demo-replay.md` for the full endpoint and event reference, and
+`doc/shot-trace.md` for the `shot` SSE event emitted for weapon traces.
 
 ## Tests
 

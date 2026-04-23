@@ -63,10 +63,21 @@ const DEFAULT_COLOUR = { fill: 'rgba(140, 140, 140, 0.85)', stroke: 'rgba(200, 2
 const TRACE_TTL_MS = 500;
 const TRACE_MAX = 256;
 
-// Two-point (exact) TE types — start is the muzzle, endPosition is the impact.
+// Two-point (exact) TE types — wireStart is the muzzle, wireEnd is the impact.
 const TE_TWO_POINT = new Set([3 /*RailTrail*/, 11 /*BubbleTrail*/, 23 /*BfgLaser*/, 27 /*BlueHyper*/]);
 
+// When true, two-point traces start at the resolved shooter's player origin
+// rather than the raw muzzle position. Produces cleaner top-down lines.
+const USE_SHOOTER_ORIGIN_AS_START = true;
+
 const traces = []; // { x0, y0, x1, y1, team, t0 }
+
+function playerOrigin(num) {
+    for (const ent of players) {
+        if (ent.number === num) return ent.origin;
+    }
+    return null;
+}
 
 function pushTrace(start, end, team) {
     traces.push({
@@ -79,18 +90,27 @@ function pushTrace(start, end, team) {
     scheduleRender(PLAYERS_DIRTY);
 }
 
-function nearestPlayerTeam(pos) {
-    const maxclients = maxclientsCache;
+function handleShot(ev) {
+    if (!ev || !ev.wireStart) return;
     const teamMap = getTeamMap();
-    let best = null;
-    let bestDist = Infinity;
-    for (const ent of players) {
-        if (ent.number < 0 || ent.number >= maxclients) continue;
-        const d = Math.hypot(pos[0] - ent.origin[0], pos[1] - ent.origin[1]);
-        if (d < bestDist) { bestDist = d; best = ent; }
+    const team = (typeof ev.shooter === 'number') ? teamMap[ev.shooter] : undefined;
+
+    if (ev.wireEnd && TE_TWO_POINT.has(ev.type)) {
+        // Two-point weapon trace: muzzle → impact.
+        let start = ev.wireStart;
+        if (USE_SHOOTER_ORIGIN_AS_START && typeof ev.shooter === 'number') {
+            const o = playerOrigin(ev.shooter);
+            if (o) start = o;
+        }
+        pushTrace(start, ev.wireEnd, team);
+        return;
     }
-    if (!best) return undefined;
-    return teamMap[best.number];
+
+    // Single-point bullet TE: draw from shooter origin → impact.
+    if (typeof ev.shooter !== 'number') return;
+    const o = playerOrigin(ev.shooter);
+    if (!o) return;
+    pushTrace(o, ev.wireStart, team);
 }
 
 // ─── Dirty-flag render scheduling ────────────────────────────────────────────
@@ -765,13 +785,8 @@ function connectSSE() {
         scoreboardState.layoutText = ev.text;
     });
 
-    es.addEventListener('te', (e) => {
-        const ev = JSON.parse(e.data);
-        if (!ev || !ev.position || !ev.endPosition) return;
-        if (!TE_TWO_POINT.has(ev.type)) return;
-        // Exact: muzzle → impact. Color from whoever is nearest the muzzle.
-        const team = nearestPlayerTeam(ev.position);
-        pushTrace(ev.position, ev.endPosition, team);
+    es.addEventListener('shot', (e) => {
+        handleShot(JSON.parse(e.data));
     });
 
     es.addEventListener('error', () => {
