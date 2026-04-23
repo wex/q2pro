@@ -104,7 +104,8 @@ const PARTICLE_MIN_RADIUS = 1.2;
 const PARTICLE_MAX_RADIUS = 2.8;
 
 const RING_TTL_MS = 300;
-const RING_EXPAND_PX = 14;
+const RING_START_PX = 20;
+const RING_EXPAND_PX = 22;
 
 const DAMAGE_COOLDOWN_MS = 80;
 
@@ -113,6 +114,9 @@ const KILL_X_TTL_MS = 800;
 const COLOUR_BLOOD = [220, 40, 40];    // r,g,b
 const COLOUR_SPARKS = [255, 210, 40];
 const COLOUR_KILL = [255, 80, 80];
+// Muzzle-flash hilite: whole cone is repainted in this hue while a flash is
+// active, so shooting reads at a glance regardless of the shooter's team.
+const COLOUR_FLASH = [255, 220, 80];
 
 // Active FX state.
 // flashes: Map<clientNum, { until, weapon }>
@@ -327,13 +331,22 @@ function renderPlayers() {
         const [cx, cy] = worldToSvg(origin[0], origin[1]);
         const t = age / RING_TTL_MS;         // 0..1
         const alpha = 1 - t;
-        const radius = 16 + t * RING_EXPAND_PX;
+        const radius = RING_START_PX + t * RING_EXPAND_PX;
         const col = b.kind === 'blood' ? COLOUR_BLOOD : COLOUR_SPARKS;
+        // Outer bold ring — the "border" the user wants widened.
         ctx.beginPath();
         ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-        ctx.strokeStyle = rgba(col, alpha * 0.9);
-        ctx.lineWidth = 2 / transform.scale;
+        ctx.strokeStyle = rgba(col, alpha * 0.95);
+        ctx.lineWidth = 4 / transform.scale;
         ctx.stroke();
+        // Soft inner halo for a fatter read without obscuring the icon.
+        if (radius > 6) {
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius - 4, 0, Math.PI * 2);
+            ctx.strokeStyle = rgba(col, alpha * 0.35);
+            ctx.lineWidth = 2 / transform.scale;
+            ctx.stroke();
+        }
     }
     bursts.length = aliveBursts;
 
@@ -433,8 +446,9 @@ function renderPlayers() {
         const rightX = sx + Math.cos(ca + coneHalf) * coneLen;
         const rightY = sy + Math.sin(ca + coneHalf) * coneLen;
 
-        // Flash boost: while a recent muzzleflash is active, brighten the
-        // cone fill+stroke and extend slightly beyond the team palette.
+        // Flash boost: while a recent muzzleflash is active, repaint the whole
+        // cone in muzzle-flash yellow so shooting reads at a glance regardless
+        // of the shooter's team palette.
         const flash = flashes.get(ent.number);
         let coneFill = col.cone;
         let coneStroke = col.coneStroke;
@@ -445,11 +459,9 @@ function renderPlayers() {
             const remaining = flash.until - now;
             const dur = flashDurationMs(flash.weapon);
             const intensity = Math.min(1, remaining / dur);
-            // Replace cone palette with a team-tinted bright version.
-            const baseFill = col.fill; // already has team colour at 0.85
-            coneFill = baseFill.replace(/[\d.]+\)$/, `${0.35 + intensity * 0.45})`);
-            coneStroke = col.stroke.replace(/[\d.]+\)$/, `${0.6 + intensity * 0.4})`);
-            coneLineWidth = 1.5 + intensity * 1.5;
+            coneFill = rgba(COLOUR_FLASH, 0.35 + intensity * 0.55);
+            coneStroke = rgba(COLOUR_FLASH, 0.85 + intensity * 0.15);
+            coneLineWidth = 2.0 + intensity * 2.5;
         }
 
         ctx.beginPath();
