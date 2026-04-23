@@ -19,8 +19,12 @@ import {
 import { BspFile } from './bsp';
 import { generateMapSvg } from './map-render';
 
-const host = process.argv[2] || '127.0.0.1';
-const port = parseInt(process.argv[3] || '27910', 10);
+const defaultHost = process.argv[2] || '127.0.0.1';
+const defaultPort = parseInt(process.argv[3] || '27910', 10);
+
+// Live GTV target; mutated by POST /connect so the UI can pick host/port.
+let host = defaultHost;
+let port = defaultPort;
 
 const client = new MvdClient({
     host,
@@ -157,6 +161,7 @@ client.on('disconnect', ({ reason }) => {
 
 client.on('close', () => {
     console.log('[close] Connection closed');
+    sseBroadcast('liveStop', {});
 });
 
 // ── SSE client management ───────────────────────────────────────
@@ -411,7 +416,43 @@ function stopReplay(): boolean {
 // ── HTTP server ─────────────────────────────────────────────────
 
 const MAPS_DIR = path.resolve(__dirname, '..', 'maps');
+const DEMOS_DIR = path.resolve(__dirname, '..', 'assets', 'demos');
 const HTTP_PORT = parseInt(process.env.HTTP_PORT || '8080', 10);
+
+const MAX_REQUEST_BODY = 4 * 1024;
+
+function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        req.on('data', (chunk: Buffer) => {
+            size += chunk.length;
+            if (size > MAX_REQUEST_BODY) {
+                reject(new Error('body too large'));
+                req.destroy();
+                return;
+            }
+            chunks.push(chunk);
+        });
+        req.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf8').trim();
+            if (!raw) return resolve({});
+            try {
+                resolve(JSON.parse(raw));
+            } catch (err) {
+                reject(err);
+            }
+        });
+        req.on('error', reject);
+    });
+}
+
+function listDemos(): string[] {
+    if (!fs.existsSync(DEMOS_DIR)) return [];
+    return fs.readdirSync(DEMOS_DIR)
+        .filter((name) => name.toLowerCase().endsWith('.mvd2'))
+        .sort();
+}
 
 const bspCache = new Map<string, BspFile>();
 
@@ -442,8 +483,38 @@ const httpServer = http.createServer((req, res) => {
             sendJson(res, 409, { error: 'already-connected', state: client.state });
             return;
         }
-        client.connect();
-        sendJson(res, 202, { state: client.state });
+        readJsonBody(req).then((body) => {
+            const b = (body ?? {}) as { host?: unknown; port?: unknown };
+            let nextHost = defaultHost;
+            let nextPort = defaultPort;
+            if (b.host !== undefined) {
+                if (typeof b.host !== 'string' || b.host.trim().length === 0) {
+                    sendJson(res, 400, { error: 'invalid-host' });
+                    return;
+                }
+                nextHost = b.host.trim();
+            }
+            if (b.port !== undefined) {
+                const p = typeof b.port === 'number' ? b.port : parseInt(String(b.port), 10);
+                if (!Number.isInteger(p) || p < 1 || p > 65535) {
+                    sendJson(res, 400, { error: 'invalid-port' });
+                    return;
+                }
+                nextPort = p;
+            }
+            host = nextHost;
+            port = nextPort;
+            client.setTarget(host, port);
+            client.connect();
+            sendJson(res, 202, { state: client.state, host, port });
+        }).catch((err: Error) => {
+            sendJson(res, 400, { error: 'invalid-body', message: err.message });
+        });
+        return;
+    }
+
+    if (url.pathname === '/demos' && req.method === 'GET') {
+        sendJson(res, 200, { demos: listDemos() });
         return;
     }
 
@@ -464,9 +535,15 @@ const httpServer = http.createServer((req, res) => {
             return;
         }
         const requested = url.searchParams.get('file');
-        const filePath = requested
-            ? path.resolve(__dirname, '..', requested)
-            : DEFAULT_DEMO;
+        let filePath: string;
+        if (!requested) {
+            filePath = DEFAULT_DEMO;
+        } else if (!requested.includes('/') && !requested.includes('\\')) {
+            // Bare filename: resolve under assets/demos/.
+            filePath = path.join(DEMOS_DIR, requested);
+        } else {
+            filePath = path.resolve(__dirname, '..', requested);
+        }
         if (!fs.existsSync(filePath)) {
             sendJson(res, 404, { error: 'not-found', file: filePath });
             return;
@@ -580,7 +657,8 @@ httpServer.listen(HTTP_PORT, () => {
     console.log(`[http]   GET  /maps/{name}  — SVG map render`);
     console.log(`[http]   GET  /events       — SSE stream`);
     console.log(`[http]   GET  /state        — current mode (idle/live/replay)`);
-    console.log(`[http]   POST /connect      — start live GTV to ${host}:${port}`);
+    console.log(`[http]   GET  /demos        — list demo filenames in assets/demos/`);
+    console.log(`[http]   POST /connect      — start live GTV (body: { host?, port? }; defaults ${defaultHost}:${defaultPort})`);
     console.log(`[http]   POST /disconnect   — stop live GTV`);
     console.log(`[http]   POST /replay[?file=...] — replay a .mvd2 demo`);
     console.log(`[http]   DEL  /replay       — stop active replay`);

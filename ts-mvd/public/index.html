@@ -11,9 +11,38 @@
     <canvas id="map"></canvas>
     <canvas id="players"></canvas>
     <div id="status">
-        <span id="status-conn">Connecting…</span>
+        <span id="status-conn">Idle</span>
         <span id="status-map"></span>
         <span id="status-entities"></span>
+        <button id="status-stop" type="button" hidden>Stop</button>
+    </div>
+    <div id="session-modal" class="modal">
+        <div class="modal-card">
+            <h2>ts-mvd</h2>
+            <div class="tabs" role="tablist">
+                <button type="button" class="tab active" data-tab="connect" role="tab">Connect to server</button>
+                <button type="button" class="tab" data-tab="replay" role="tab">Replay a demo</button>
+            </div>
+            <form id="connect-form" class="tab-panel active" data-tab="connect">
+                <label>
+                    Hostname
+                    <input id="connect-host" type="text" value="127.0.0.1" required autocomplete="off">
+                </label>
+                <label>
+                    Port
+                    <input id="connect-port" type="number" min="1" max="65535" value="27910" required>
+                </label>
+                <button type="submit">Connect</button>
+            </form>
+            <form id="replay-form" class="tab-panel" data-tab="replay">
+                <label>
+                    Demo
+                    <select id="demo-select" required></select>
+                </label>
+                <button type="submit">Replay</button>
+            </form>
+            <div id="session-error" class="error" hidden></div>
+        </div>
     </div>
     <div id="panel">
         <section id="scoreboard-section">

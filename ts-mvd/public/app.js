@@ -8,6 +8,16 @@ const playersCanvas = document.getElementById('players');
 const mapCtx = mapCanvas.getContext('2d');
 const playersCtx = playersCanvas.getContext('2d');
 const elConn = document.getElementById('status-conn');
+const elStop = document.getElementById('status-stop');
+const elModal = document.getElementById('session-modal');
+const elConnectForm = document.getElementById('connect-form');
+const elReplayForm = document.getElementById('replay-form');
+const elConnectHost = document.getElementById('connect-host');
+const elConnectPort = document.getElementById('connect-port');
+const elDemoSelect = document.getElementById('demo-select');
+const elSessionError = document.getElementById('session-error');
+const elTabs = document.querySelectorAll('#session-modal .tab');
+const elTabPanels = document.querySelectorAll('#session-modal .tab-panel');
 const elMap = document.getElementById('status-map');
 const elEntities = document.getElementById('status-entities');
 const elScoreboardBody = document.querySelector('#scoreboard tbody');
@@ -636,8 +646,28 @@ function connectSSE() {
     const es = new EventSource(SSE_URL);
 
     es.addEventListener('open', () => {
-        elConn.textContent = 'Connected';
-        elConn.classList.add('connected');
+        // SSE is always-on; session state is shown separately.
+        refreshSessionState();
+    });
+
+    es.addEventListener('replayStart', () => {
+        refreshSessionState();
+    });
+
+    es.addEventListener('replayEnd', () => {
+        refreshSessionState({ reopen: true });
+    });
+
+    es.addEventListener('liveStop', () => {
+        refreshSessionState({ reopen: true });
+    });
+
+    es.addEventListener('replayError', (e) => {
+        try {
+            const ev = JSON.parse(e.data);
+            showSessionError(`Replay error: ${ev.message || 'unknown'}`);
+        } catch { }
+        refreshSessionState({ reopen: true });
     });
 
     es.addEventListener('snapshot', (e) => {
@@ -745,8 +775,7 @@ function connectSSE() {
     });
 
     es.addEventListener('error', () => {
-        elConn.textContent = 'Disconnected';
-        elConn.classList.remove('connected');
+        // SSE transport error; state UI is driven by /state polling.
     });
 }
 
@@ -794,4 +823,168 @@ window.addEventListener('mouseup', () => {
 playersCanvas.addEventListener('dblclick', () => {
     fitToScreen();
     scheduleRender(MAP_DIRTY | PLAYERS_DIRTY);
+});
+
+// ─── Session chooser ─────────────────────────────────────────────────────────
+
+let currentMode = 'idle'; // 'idle' | 'live' | 'replay'
+
+function showSessionError(msg) {
+    elSessionError.textContent = msg;
+    elSessionError.hidden = false;
+}
+
+function clearSessionError() {
+    elSessionError.hidden = true;
+    elSessionError.textContent = '';
+}
+
+function openModal() {
+    elModal.hidden = false;
+    clearSessionError();
+}
+
+function closeModal() {
+    elModal.hidden = true;
+}
+
+function setMode(mode) {
+    currentMode = mode;
+    if (mode === 'idle') {
+        elConn.textContent = 'Idle';
+        elConn.classList.remove('connected');
+        elStop.hidden = true;
+    } else if (mode === 'live') {
+        elConn.textContent = 'Live';
+        elConn.classList.add('connected');
+        elStop.hidden = false;
+    } else if (mode === 'replay') {
+        elConn.textContent = 'Replay';
+        elConn.classList.add('connected');
+        elStop.hidden = false;
+    }
+}
+
+async function refreshSessionState(opts = {}) {
+    try {
+        const res = await fetch('/state');
+        if (!res.ok) return;
+        const data = await res.json();
+        setMode(data.mode || 'idle');
+        if (data.mode === 'idle' && opts.reopen) {
+            openModal();
+        } else if (data.mode !== 'idle') {
+            closeModal();
+        }
+    } catch (err) {
+        console.error('[state]', err);
+    }
+}
+
+async function loadDemos() {
+    try {
+        const res = await fetch('/demos');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        elDemoSelect.innerHTML = '';
+        const demos = data.demos || [];
+        if (demos.length === 0) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = '(no demos found)';
+            opt.disabled = true;
+            elDemoSelect.appendChild(opt);
+            elReplayForm.querySelector('button[type="submit"]').disabled = true;
+        } else {
+            for (const name of demos) {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                elDemoSelect.appendChild(opt);
+            }
+            elReplayForm.querySelector('button[type="submit"]').disabled = false;
+        }
+    } catch (err) {
+        showSessionError(`Failed to load demo list: ${err.message}`);
+    }
+}
+
+elTabs.forEach((btn) => {
+    btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        elTabs.forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+        elTabPanels.forEach((p) => p.classList.toggle('active', p.dataset.tab === tab));
+        clearSessionError();
+    });
+});
+
+elConnectForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearSessionError();
+    const submitBtn = elConnectForm.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    try {
+        const host = elConnectHost.value.trim();
+        const port = parseInt(elConnectPort.value, 10);
+        const res = await fetch('/connect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ host, port }),
+        });
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            showSessionError(`Connect failed: ${body.error || res.status}`);
+            return;
+        }
+        await refreshSessionState();
+    } catch (err) {
+        showSessionError(`Connect failed: ${err.message}`);
+    } finally {
+        submitBtn.disabled = false;
+    }
+});
+
+elReplayForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearSessionError();
+    const submitBtn = elReplayForm.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    try {
+        const file = elDemoSelect.value;
+        if (!file) {
+            showSessionError('Select a demo first.');
+            return;
+        }
+        const res = await fetch(`/replay?file=${encodeURIComponent(file)}`, { method: 'POST' });
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            showSessionError(`Replay failed: ${body.error || res.status}`);
+            return;
+        }
+        await refreshSessionState();
+    } catch (err) {
+        showSessionError(`Replay failed: ${err.message}`);
+    } finally {
+        submitBtn.disabled = false;
+    }
+});
+
+elStop.addEventListener('click', async () => {
+    try {
+        if (currentMode === 'replay') {
+            await fetch('/replay', { method: 'DELETE' });
+        } else if (currentMode === 'live') {
+            await fetch('/disconnect', { method: 'POST' });
+        }
+    } catch (err) {
+        console.error('[stop]', err);
+    }
+    await refreshSessionState();
+    openModal();
+});
+
+// Bootstrap: determine whether to show the modal and populate demos.
+loadDemos();
+refreshSessionState().then(() => {
+    if (currentMode === 'idle') openModal();
 });

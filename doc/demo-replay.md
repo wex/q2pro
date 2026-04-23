@@ -22,9 +22,10 @@ clients under `ts-mvd/public/` see identical `serverdata`, `configstring`,
 | Method | Path                    | Purpose                                         |
 |--------|-------------------------|-------------------------------------------------|
 | GET    | `/state`                | `{ mode, clientState, replayFile }`             |
-| POST   | `/connect`              | Start live GTV (rejected if replay active)      |
+| GET    | `/demos`                | `{ demos: string[] }` — `.mvd2` filenames in `ts-mvd/assets/demos/` |
+| POST   | `/connect`              | Start live GTV (rejected if replay active). Optional JSON body `{ host?, port? }`; defaults fall back to the CLI args. |
 | POST   | `/disconnect`           | Stop live GTV                                   |
-| POST   | `/replay[?file=<path>]` | Start demo replay; default `assets/demos/demo.mvd2`. Path is resolved relative to `ts-mvd/` |
+| POST   | `/replay[?file=<name>]` | Start demo replay; default `assets/demos/demo.mvd2`. Bare filenames (no `/`) are resolved under `ts-mvd/assets/demos/`; paths with a slash are resolved relative to `ts-mvd/`. |
 | DELETE | `/replay`               | Stop active replay                              |
 
 `POST /replay` responds:
@@ -38,6 +39,22 @@ In addition to the existing stream events:
 - `replayStart` — `{ file }` when replay begins.
 - `replayEnd` — `{}` when replay finishes or is cancelled.
 - `replayError` — `{ message }` on demo-reader errors.
+- `liveStop` — `{}` when the live GTV socket closes (user `/disconnect` or
+  server-side drop). Lets the browser UI return to the chooser.
+
+## Browser chooser UI
+
+`ts-mvd/public/index.html` shows a modal start screen at load time when
+`/state` reports `mode: 'idle'`. The modal has two tabs:
+
+- **Connect to server** — hostname + port inputs, submits
+  `POST /connect` with JSON `{ host, port }`.
+- **Replay a demo** — dropdown populated from `GET /demos`, submits
+  `POST /replay?file=<name>`.
+
+A **Stop** button in the status bar ends the active session (`DELETE /replay`
+or `POST /disconnect`) and reopens the modal. The modal also reopens
+automatically on `replayEnd`, `replayError`, or `liveStop`.
 
 ## Usage
 

@@ -102,6 +102,17 @@ export class MvdClient extends EventEmitter {
 
     // ── Public API ──────────────────────────────────────────────────
 
+    /**
+     * Update the live GTV target. Only allowed while disconnected; ignored
+     * otherwise so an in-flight session is not torn mid-stream.
+     */
+    setTarget(host: string, port: number): boolean {
+        if (this._state !== ClientState.Disconnected) return false;
+        (this.opts as { host: string }).host = host;
+        (this.opts as { port: number }).port = port;
+        return true;
+    }
+
     connect(): void {
         if (this._state !== ClientState.Disconnected) {
             return;

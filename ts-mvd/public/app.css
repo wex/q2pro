@@ -36,6 +36,7 @@ body {
     top: 10px;
     left: 10px;
     display: flex;
+    align-items: center;
     gap: 12px;
     padding: 6px 10px;
     background: rgba(0, 0, 0, 0.65);
@@ -44,8 +45,23 @@ body {
     font-family: monospace;
     font-size: 12px;
     color: #ccc;
-    pointer-events: none;
     user-select: none;
+    z-index: 3;
+}
+
+#status-stop {
+    margin-left: 4px;
+    padding: 2px 8px;
+    background: rgba(160, 40, 40, 0.6);
+    color: #fff;
+    border: 1px solid rgba(255, 120, 120, 0.5);
+    border-radius: 3px;
+    font: inherit;
+    cursor: pointer;
+}
+
+#status-stop:hover {
+    background: rgba(200, 60, 60, 0.75);
 }
 
 #status-conn {
@@ -244,4 +260,133 @@ body {
 #chat li .sys {
     color: #ccaa55;
     font-style: italic;
+}
+
+/* ── Session chooser modal ────────────────────────────────────── */
+
+.modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.78);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    font-family: monospace;
+    color: #ddd;
+}
+
+.modal[hidden] {
+    display: none;
+}
+
+.modal-card {
+    background: #141414;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    padding: 24px 28px;
+    width: 360px;
+    max-width: calc(100vw - 32px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+
+.modal-card h2 {
+    margin: 0 0 16px 0;
+    font-size: 18px;
+    color: #ccaa55;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.modal-card .tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.modal-card .tab {
+    flex: 1 1 auto;
+    padding: 8px 10px;
+    background: transparent;
+    color: #888;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font: inherit;
+    cursor: pointer;
+}
+
+.modal-card .tab:hover {
+    color: #ccc;
+}
+
+.modal-card .tab.active {
+    color: #ccaa55;
+    border-bottom-color: #ccaa55;
+}
+
+.modal-card .tab-panel {
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.modal-card .tab-panel.active {
+    display: flex;
+}
+
+.modal-card label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: #aaa;
+}
+
+.modal-card input,
+.modal-card select {
+    background: #222;
+    color: #eee;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+    padding: 6px 8px;
+    font: inherit;
+    font-size: 13px;
+}
+
+.modal-card input:focus,
+.modal-card select:focus {
+    outline: none;
+    border-color: #ccaa55;
+}
+
+.modal-card button[type="submit"] {
+    margin-top: 4px;
+    padding: 8px 12px;
+    background: #ccaa55;
+    color: #111;
+    border: none;
+    border-radius: 3px;
+    font: inherit;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.modal-card button[type="submit"]:hover {
+    background: #e0bc66;
+}
+
+.modal-card button[type="submit"]:disabled {
+    opacity: 0.5;
+    cursor: wait;
+}
+
+.modal-card .error {
+    margin-top: 4px;
+    padding: 6px 8px;
+    background: rgba(180, 40, 40, 0.25);
+    border: 1px solid rgba(255, 120, 120, 0.5);
+    border-radius: 3px;
+    color: #ffb0b0;
+    font-size: 12px;
 }
