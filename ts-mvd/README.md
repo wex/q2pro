@@ -62,6 +62,22 @@ client.connect();
 npx ts-node src/example.ts [host] [port]
 ```
 
+## Demo Playback
+
+Stream a local `.mvd2` file through the same `MvdFrameParser` used for live
+GTV connections. See `doc/mvd2-demo-reader.md` for details.
+
+```typescript
+import { MvdDemoReader, MvdFrameParser } from 'ts-mvd';
+
+const parser = new MvdFrameParser();
+parser.onFrame = (ev) => console.log('frame', ev.frameNumber);
+
+new MvdDemoReader({ realtime: true })
+    .on('message', (buf) => parser.parse(buf))
+    .play('assets/demos/demo.mvd2');
+```
+
 ## Tools
 
 ### texture-export

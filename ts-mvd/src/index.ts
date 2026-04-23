@@ -27,6 +27,11 @@ export {
 } from './protocol';
 export { BufferReader, BufferWriter } from './buffer';
 export {
+    MvdDemoReader,
+    MvdDemoReaderOptions,
+    MvdDemoReaderEventMap,
+} from './demo';
+export {
     MvdFrameParser,
     PlayerState,
     FrameEvent,
