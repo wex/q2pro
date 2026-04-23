@@ -652,24 +652,53 @@ const httpServer = http.createServer((req, res) => {
     }
 });
 
-httpServer.listen(HTTP_PORT, () => {
-    console.log(`[http] Listening on http://localhost:${HTTP_PORT}`);
-    console.log(`[http]   GET  /maps/{name}  — SVG map render`);
-    console.log(`[http]   GET  /events       — SSE stream`);
-    console.log(`[http]   GET  /state        — current mode (idle/live/replay)`);
-    console.log(`[http]   GET  /demos        — list demo filenames in assets/demos/`);
-    console.log(`[http]   POST /connect      — start live GTV (body: { host?, port? }; defaults ${defaultHost}:${defaultPort})`);
-    console.log(`[http]   POST /disconnect   — stop live GTV`);
-    console.log(`[http]   POST /replay[?file=...] — replay a .mvd2 demo`);
-    console.log(`[http]   DEL  /replay       — stop active replay`);
-});
+// ── Public test/embed surface ───────────────────────────────────
 
-// Graceful shutdown
-process.on('SIGINT', () => {
-    console.log('\nDisconnecting...');
-    currentReplay?.stop();
-    httpServer.close();
-    udpSock.close();
+export {
+    httpServer,
+    client,
+    parser,
+    listDemos,
+    startReplay,
+    stopReplay,
+    DEMOS_DIR,
+    DEFAULT_DEMO,
+};
+
+/**
+ * Reset all in-memory session state. Intended for test isolation so suites
+ * can share the single module instance without bleed-through.
+ */
+export function resetAppStateForTests(): void {
+    if (currentReplay) currentReplay.stop();
+    currentReplay = null;
+    currentReplayFile = null;
     client.disconnect();
-    process.exit(0);
-});
+    resetPipelineState();
+}
+
+// ── CLI bootstrap ───────────────────────────────────────────────
+
+if (require.main === module) {
+    httpServer.listen(HTTP_PORT, () => {
+        console.log(`[http] Listening on http://localhost:${HTTP_PORT}`);
+        console.log(`[http]   GET  /maps/{name}  — SVG map render`);
+        console.log(`[http]   GET  /events       — SSE stream`);
+        console.log(`[http]   GET  /state        — current mode (idle/live/replay)`);
+        console.log(`[http]   GET  /demos        — list demo filenames in assets/demos/`);
+        console.log(`[http]   POST /connect      — start live GTV (body: { host?, port? }; defaults ${defaultHost}:${defaultPort})`);
+        console.log(`[http]   POST /disconnect   — stop live GTV`);
+        console.log(`[http]   POST /replay[?file=...] — replay a .mvd2 demo`);
+        console.log(`[http]   DEL  /replay       — stop active replay`);
+    });
+
+    // Graceful shutdown
+    process.on('SIGINT', () => {
+        console.log('\nDisconnecting...');
+        currentReplay?.stop();
+        httpServer.close();
+        udpSock.close();
+        client.disconnect();
+        process.exit(0);
+    });
+}

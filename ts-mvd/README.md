@@ -98,6 +98,15 @@ curl           http://localhost:8080/demos
 
 See `doc/demo-replay.md` for the full endpoint and event reference.
 
+## Tests
+
+```bash
+npm test          # run the Jest suite
+npm run test:watch
+```
+
+See `doc/testing.md` for layout and conventions.
+
 ## Tools
 
 ### texture-export
