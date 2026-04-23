@@ -3,6 +3,8 @@ import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { MvdClient } from './index';
+import { MvdDemoReader } from './demo';
+import { ClientState } from './protocol';
 import {
     MvdFrameParser,
     PlayerState,
@@ -28,6 +30,11 @@ const client = new MvdClient({
     autoReconnect: true,
     reconnectDelay: 5000,
 });
+
+// Active demo replay, if any. When non-null, live GTV is expected to be idle
+// and UDP OOB polling is skipped.
+let currentReplay: MvdDemoReader | null = null;
+let currentReplayFile: string | null = null;
 
 const parser = new MvdFrameParser();
 
@@ -332,14 +339,74 @@ function sendOOBStatus(): void {
     udpSock.send(packet, 0, packet.length, port, host);
 }
 
-// Trigger OOB status query every 30th frame
+// Trigger OOB status query every 30th frame (skipped while replaying a demo)
 const origOnFrame2 = parser.onFrame;
 parser.onFrame = (ev) => {
     origOnFrame2?.(ev);
+    if (currentReplay) return;
     if (ev.frameNumber > 0 && ev.frameNumber % 30 === 0) {
         sendOOBStatus();
     }
 };
+
+// ── Replay plumbing ─────────────────────────────────────────────
+
+const DEFAULT_DEMO = path.resolve(__dirname, '..', 'assets', 'demos', 'demo.mvd2');
+
+function resetPipelineState(): void {
+    parser.reset();
+    configstrings.clear();
+    players.clear();
+    chatLog.length = 0;
+    killFeed.length = 0;
+    scoreboard.teamScores = { team1: 0, team2: 0, team3: 0 };
+    scoreboard.layoutsFlags = 0;
+    scoreboard.layoutText = '';
+    scoreboard.players = {};
+    latestStatus = null;
+}
+
+function startReplay(filePath: string): void {
+    resetPipelineState();
+    const reader = new MvdDemoReader({ realtime: true, tickMs: 100 });
+    currentReplay = reader;
+    currentReplayFile = filePath;
+
+    reader.on('message', (buf) => {
+        try {
+            parser.parse(buf);
+        } catch (err) {
+            console.error('[replay] Parse error, dropping frame:', err);
+            parser.reset();
+        }
+    });
+    reader.on('end', () => {
+        console.log('[replay] End');
+        currentReplay = null;
+        currentReplayFile = null;
+        sseBroadcast('replayEnd', {});
+    });
+    reader.on('error', (err) => {
+        console.error('[replay] Error:', err.message);
+        currentReplay = null;
+        currentReplayFile = null;
+        sseBroadcast('replayError', { message: err.message });
+    });
+
+    sseBroadcast('replayStart', { file: filePath });
+    console.log(`[replay] Starting ${filePath}`);
+    reader.play(filePath);
+}
+
+function stopReplay(): boolean {
+    if (!currentReplay) return false;
+    currentReplay.stop();
+    currentReplay = null;
+    currentReplayFile = null;
+    sseBroadcast('replayEnd', {});
+    console.log('[replay] Stopped');
+    return true;
+}
 
 // ── HTTP server ─────────────────────────────────────────────────
 
@@ -357,8 +424,78 @@ function loadBsp(mapName: string): BspFile | null {
     return bsp;
 }
 
+function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+}
+
 const httpServer = http.createServer((req, res) => {
     const url = new URL(req.url || '/', `http://${req.headers.host}`);
+
+    // Control endpoints
+    if (url.pathname === '/connect' && req.method === 'POST') {
+        if (currentReplay) {
+            sendJson(res, 409, { error: 'replay-active' });
+            return;
+        }
+        if (client.state !== ClientState.Disconnected) {
+            sendJson(res, 409, { error: 'already-connected', state: client.state });
+            return;
+        }
+        client.connect();
+        sendJson(res, 202, { state: client.state });
+        return;
+    }
+
+    if (url.pathname === '/disconnect' && req.method === 'POST') {
+        client.disconnect();
+        res.writeHead(204);
+        res.end();
+        return;
+    }
+
+    if (url.pathname === '/replay' && req.method === 'POST') {
+        if (currentReplay) {
+            sendJson(res, 409, { error: 'replay-active', file: currentReplayFile });
+            return;
+        }
+        if (client.state !== ClientState.Disconnected) {
+            sendJson(res, 409, { error: 'live-active', state: client.state });
+            return;
+        }
+        const requested = url.searchParams.get('file');
+        const filePath = requested
+            ? path.resolve(__dirname, '..', requested)
+            : DEFAULT_DEMO;
+        if (!fs.existsSync(filePath)) {
+            sendJson(res, 404, { error: 'not-found', file: filePath });
+            return;
+        }
+        startReplay(filePath);
+        sendJson(res, 202, { file: filePath });
+        return;
+    }
+
+    if (url.pathname === '/replay' && req.method === 'DELETE') {
+        stopReplay();
+        res.writeHead(204);
+        res.end();
+        return;
+    }
+
+    if (url.pathname === '/state' && req.method === 'GET') {
+        const mode = currentReplay
+            ? 'replay'
+            : client.state === ClientState.Disconnected
+                ? 'idle'
+                : 'live';
+        sendJson(res, 200, {
+            mode,
+            clientState: client.state,
+            replayFile: currentReplayFile,
+        });
+        return;
+    }
 
     // GET /maps/{mapname}
     const mapMatch = url.pathname.match(/^\/maps\/([\w.-]+)$/);
@@ -440,16 +577,19 @@ const httpServer = http.createServer((req, res) => {
 
 httpServer.listen(HTTP_PORT, () => {
     console.log(`[http] Listening on http://localhost:${HTTP_PORT}`);
-    console.log(`[http]   GET /maps/{name}  — SVG map render`);
-    console.log(`[http]   GET /events       — SSE stream`);
+    console.log(`[http]   GET  /maps/{name}  — SVG map render`);
+    console.log(`[http]   GET  /events       — SSE stream`);
+    console.log(`[http]   GET  /state        — current mode (idle/live/replay)`);
+    console.log(`[http]   POST /connect      — start live GTV to ${host}:${port}`);
+    console.log(`[http]   POST /disconnect   — stop live GTV`);
+    console.log(`[http]   POST /replay[?file=...] — replay a .mvd2 demo`);
+    console.log(`[http]   DEL  /replay       — stop active replay`);
 });
-
-console.log(`Connecting to ${host}:${port}...`);
-client.connect();
 
 // Graceful shutdown
 process.on('SIGINT', () => {
     console.log('\nDisconnecting...');
+    currentReplay?.stop();
     httpServer.close();
     udpSock.close();
     client.disconnect();

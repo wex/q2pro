@@ -65,7 +65,7 @@ npx ts-node src/example.ts [host] [port]
 ## Demo Playback
 
 Stream a local `.mvd2` file through the same `MvdFrameParser` used for live
-GTV connections. See `doc/mvd2-demo-reader.md` for details.
+GTV connections.
 
 ```typescript
 import { MvdDemoReader, MvdFrameParser } from 'ts-mvd';
@@ -77,6 +77,22 @@ new MvdDemoReader({ realtime: true })
     .on('message', (buf) => parser.parse(buf))
     .play('assets/demos/demo.mvd2');
 ```
+
+### Replay over SSE
+
+`npm run app` starts the HTTP/SSE server in **idle** mode — no live GTV
+connection is opened. Use the control endpoints to switch between modes:
+
+```bash
+curl -X POST   http://localhost:8080/replay            # default assets/demos/demo.mvd2
+curl -X POST   'http://localhost:8080/replay?file=assets/demos/foo.mvd2'
+curl -X DELETE http://localhost:8080/replay
+curl -X POST   http://localhost:8080/connect           # live GTV
+curl -X POST   http://localhost:8080/disconnect
+curl           http://localhost:8080/state
+```
+
+See `doc/demo-replay.md` for the full endpoint and event reference.
 
 ## Tools
 
