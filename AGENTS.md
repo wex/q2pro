@@ -85,3 +85,4 @@ The test runner is Jest with `ts-jest`. See `doc/testing.md` for the full guide.
 - `doc/demo-replay.md` — demo replay pipeline.
 - `doc/mvd2-demo-reader.md` — `.mvd2` reader details.
 - `doc/texture-export.md` — texture export tooling.
+- `doc/how-to-use-devin.md` — onboarding + workflow for Devin.
