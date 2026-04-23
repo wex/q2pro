@@ -243,12 +243,14 @@ export class MvdFrameParser {
     private layoutsFlags = 0;
     private statsArrayLen = 32;
 
-    // Chat dedup state: the Q2Pro MVD stream records one mvd_unicast_r per
-    // recipient for every PF_cprintf(ent, PRINT_CHAT, ...) call, so a single
-    // player saying one line arrives as N identical svc_print payloads within
-    // the same server tick. We dedupe by (level,text) within a tick and reset
-    // on the mvd_frame boundary. See doc/chat-dedup.md.
-    private chatSeenThisTick: Set<string> = new Set();
+    // Print dedup state: the Q2Pro MVD stream records one mvd_unicast_r per
+    // recipient for every PF_cprintf(ent, PRINT_CHAT|PRINT_MEDIUM, ...) call,
+    // so a single chat line or obituary arrives as N identical svc_print
+    // payloads within the same server tick (teamplay `PrintDeathMessage` in
+    // src/action/p_client.c unicasts to every observer). We dedupe by
+    // (level,text) within a tick and reset on the mvd_frame boundary.
+    // See doc/chat-dedup.md.
+    private printSeenThisTick: Set<string> = new Set();
 
     // Callbacks
     onFrame: ((event: FrameEvent) => void) | null = null;
@@ -325,7 +327,7 @@ export class MvdFrameParser {
         this.teamScores = { team1: 0, team2: 0, team3: 0 };
         this.layoutsFlags = 0;
         this.statsArrayLen = 32;
-        this.chatSeenThisTick.clear();
+        this.printSeenThisTick.clear();
     }
 
     private getOrCreatePlayerState(number: number): PlayerState {
@@ -353,7 +355,7 @@ export class MvdFrameParser {
     private parseServerData(reader: BufferReader, extrabits: number): void {
         this.playerStates.clear();
         this.frameNumber = 0;
-        this.chatSeenThisTick.clear();
+        this.printSeenThisTick.clear();
 
         const protocol = reader.readInt32LE();
         const version = reader.readUInt16LE();
@@ -422,9 +424,9 @@ export class MvdFrameParser {
 
     private parseFrame(reader: BufferReader): void {
         // mvd_frame marks the end of a server tick. Any per-recipient unicast
-        // chat duplicates were consolidated across the preceding unicast ops,
-        // so clear the dedup set for the next tick.
-        this.chatSeenThisTick.clear();
+        // print duplicates (chat, obituaries) were consolidated across the
+        // preceding unicast ops, so clear the dedup set for the next tick.
+        this.printSeenThisTick.clear();
 
         // Skip portalbits
         const portalLen = reader.readUInt8();
@@ -838,23 +840,24 @@ export class MvdFrameParser {
     private emitPrint(level: number, text: string, clientNum: number | undefined): void {
         this.onPrint?.({ level, text, clientNum });
 
-        if (level === PrintLevel.Chat) {
-            // Dedup per-recipient unicast chat duplicates within a single
+        if (level === PrintLevel.Chat || level === PrintLevel.Medium) {
+            // Dedup per-recipient unicast print duplicates within a single
             // server tick. The raw text (including any trailing newline) is
-            // used as the signature so identical chat lines from different
-            // speakers within the same tick are still distinct.
+            // used as the signature so identical lines from different
+            // speakers/events within the same tick are still distinct.
+            // PRINT_MEDIUM covers AQ2 obituaries that `PrintDeathMessage`
+            // unicasts to every eligible observer in teamplay.
             const key = `${level}\x00${text}`;
-            if (this.chatSeenThisTick.has(key)) {
+            if (this.printSeenThisTick.has(key)) {
                 return;
             }
-            this.chatSeenThisTick.add(key);
+            this.printSeenThisTick.add(key);
 
-            this.onChat?.(classifyChat(text));
-            return;
-        }
-
-        if (level === PrintLevel.Medium) {
-            this.onObituary?.(classifyObituary(text));
+            if (level === PrintLevel.Chat) {
+                this.onChat?.(classifyChat(text));
+            } else {
+                this.onObituary?.(classifyObituary(text));
+            }
             return;
         }
 
