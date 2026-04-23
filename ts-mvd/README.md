@@ -62,6 +62,17 @@ client.connect();
 npx ts-node src/example.ts [host] [port]
 ```
 
+## Tools
+
+### texture-export
+
+List distinct renderable textures referenced by a BSP as `textures/<name>.wal`
+paths (one per line on stdout). See `doc/texture-export.md` for details.
+
+```bash
+npx tsx src/texture-export.ts <file.bsp>
+```
+
 ## Connection State Machine
 
 ```
