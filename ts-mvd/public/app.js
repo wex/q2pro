@@ -58,16 +58,73 @@ const TEAM_COLOURS = [
 ];
 const DEFAULT_COLOUR = { fill: 'rgba(140, 140, 140, 0.85)', stroke: 'rgba(200, 200, 200, 0.9)', cone: 'rgba(140, 140, 140, 0.3)', coneStroke: 'rgba(140, 140, 140, 0.6)' };
 
-// ─── Shot traces ─────────────────────────────────────────────────────────────
+// ─── Combat FX ───────────────────────────────────────────────────────────────
+//
+// Three in-place effects replace the old shot-line traces:
+//
+//  1. Flash  — player's cone briefly glows when they fire (svc_muzzleflash).
+//              Duration scales with weapon via FLASH_DURATION_MS_BY_MZ.
+//  2. Damage — particle burst + expanding ring on the victim when a blood
+//              or sparks TE lands on them. Yellow for sparks, red for blood.
+//              Rate-limited to one burst per victim per DAMAGE_COOLDOWN_MS.
+//  3. Kill X — fading red cross on the victim's last-known origin when an
+//              obituary fires.
+//
+// All FX use performance.now() clocks so fading is smooth independent of
+// SSE delivery cadence. Every live FX keeps the players canvas ticking via
+// scheduleRender(PLAYERS_DIRTY).
 
-const TRACE_TTL_MS = 500;
-const TRACE_MAX = 256;
+const FLASH_DURATION_DEFAULT_MS = 120;
+// Indexed by MZ_* ids from inc/shared/shared.h. Unlisted ids use the default.
+const FLASH_DURATION_MS_BY_MZ = {
+    0: 120,  // MZ_BLASTER
+    1: 120,  // MZ_MACHINEGUN
+    2: 160,  // MZ_SHOTGUN
+    3: 140,  // MZ_CHAINGUN1
+    4: 140,  // MZ_CHAINGUN2
+    5: 140,  // MZ_CHAINGUN3
+    6: 260,  // MZ_RAILGUN
+    7: 200,  // MZ_ROCKET
+    8: 180,  // MZ_GRENADE
+    12: 240, // MZ_BFG
+    13: 180, // MZ_SSHOTGUN (super shotgun / AQ2 M3+HC)
+    14: 120, // MZ_HYPERBLASTER
+    30: 200, // MZ_ETF_RIFLE
+    32: 260, // MZ_SHOTGUN2 / AQ2 sniper family
+    34: 120, // MZ_BLASTER2
+    36: 220, // MZ_NUKE1
+    37: 240, // MZ_NUKE2
+};
 
-// When true, two-point traces start at the resolved shooter's player origin
-// rather than the raw muzzle position. Produces cleaner top-down lines.
-const USE_SHOOTER_ORIGIN_AS_START = true;
+const PARTICLE_COUNT = 8;
+const PARTICLE_TTL_MS = 600;
+const PARTICLE_MIN_SPEED = 20;   // px/s (SVG space)
+const PARTICLE_MAX_SPEED = 60;
+const PARTICLE_MIN_RADIUS = 1.2;
+const PARTICLE_MAX_RADIUS = 2.8;
 
-const traces = []; // { x0, y0, x1, y1, team, t0 }
+const RING_TTL_MS = 300;
+const RING_EXPAND_PX = 14;
+
+const DAMAGE_COOLDOWN_MS = 80;
+
+const KILL_X_TTL_MS = 800;
+
+const COLOUR_BLOOD = [220, 40, 40];    // r,g,b
+const COLOUR_SPARKS = [255, 210, 40];
+const COLOUR_KILL = [255, 80, 80];
+
+// Active FX state.
+// flashes: Map<clientNum, { until, weapon }>
+const flashes = new Map();
+// bursts: [{ victim, kind, t0 }]  — one per accepted damage event.
+const bursts = [];
+// particles: [{ victim, kind, t0, dx, dy, vx, vy, r }]  — flat array for efficient GC.
+const particles = [];
+// killXs: [{ x, y, t0 }] in world coords.
+const killXs = [];
+// Rate-limit bookkeeping: clientNum → { t, kind }.
+const lastDamageByVictim = new Map();
 
 function playerOrigin(num) {
     for (const ent of players) {
@@ -76,40 +133,75 @@ function playerOrigin(num) {
     return null;
 }
 
-function pushTrace(start, end, team) {
-    traces.push({
-        x0: start[0], y0: start[1],
-        x1: end[0], y1: end[1],
-        team: team,
-        t0: performance.now(),
-    });
-    if (traces.length > TRACE_MAX) traces.splice(0, traces.length - TRACE_MAX);
+function flashDurationMs(weapon) {
+    if (weapon == null) return FLASH_DURATION_DEFAULT_MS;
+    return FLASH_DURATION_MS_BY_MZ[weapon] ?? FLASH_DURATION_DEFAULT_MS;
+}
+
+function handleFlash(ev) {
+    if (!ev || typeof ev.shooter !== 'number') return;
+    const now = performance.now();
+    const dur = flashDurationMs(ev.weapon);
+    const existing = flashes.get(ev.shooter);
+    // Stack by extending until the longest of the existing and new shot.
+    const until = Math.max(existing ? existing.until : 0, now + dur);
+    flashes.set(ev.shooter, { until, weapon: ev.weapon });
     scheduleRender(PLAYERS_DIRTY);
 }
 
-function handleShot(ev) {
-    if (!ev || !ev.wireStart) return;
-    const teamMap = getTeamMap();
-    const team = (typeof ev.shooter === 'number') ? teamMap[ev.shooter] : undefined;
-
-    if (ev.wireEnd) {
-        // Two-point trace: muzzle → impact (wall hits) or shooter → victim
-        // (synthetic traces emitted by the server for player-hit bullets
-        // where AQ2 writes no bullet TE).
-        let start = ev.wireStart;
-        if (USE_SHOOTER_ORIGIN_AS_START && typeof ev.shooter === 'number') {
-            const o = playerOrigin(ev.shooter);
-            if (o) start = o;
-        }
-        pushTrace(start, ev.wireEnd, team);
-        return;
+function handleDamage(ev) {
+    if (!ev || typeof ev.victim !== 'number' || (ev.kind !== 'blood' && ev.kind !== 'sparks')) return;
+    const now = performance.now();
+    // Rate limit: one burst per victim per DAMAGE_COOLDOWN_MS. Blood upgrades
+    // an in-window sparks; otherwise keep the existing burst.
+    const last = lastDamageByVictim.get(ev.victim);
+    if (last && (now - last.t) < DAMAGE_COOLDOWN_MS) {
+        if (!(ev.kind === 'blood' && last.kind === 'sparks')) return;
     }
+    lastDamageByVictim.set(ev.victim, { t: now, kind: ev.kind });
 
-    // Single-point bullet TE: draw from shooter origin → impact.
-    if (typeof ev.shooter !== 'number') return;
-    const o = playerOrigin(ev.shooter);
-    if (!o) return;
-    pushTrace(o, ev.wireStart, team);
+    bursts.push({ victim: ev.victim, kind: ev.kind, t0: now });
+
+    // Spawn particles. Offsets are in SVG pixel space around the victim's
+    // icon; we re-anchor to the victim's live origin each frame.
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const speed = PARTICLE_MIN_SPEED + Math.random() * (PARTICLE_MAX_SPEED - PARTICLE_MIN_SPEED);
+        const r = PARTICLE_MIN_RADIUS + Math.random() * (PARTICLE_MAX_RADIUS - PARTICLE_MIN_RADIUS);
+        particles.push({
+            victim: ev.victim,
+            kind: ev.kind,
+            t0: now,
+            dx: Math.cos(ang) * 6,  // start just off the icon
+            dy: Math.sin(ang) * 6,
+            vx: Math.cos(ang) * speed,
+            vy: Math.sin(ang) * speed,
+            r,
+        });
+    }
+    scheduleRender(PLAYERS_DIRTY);
+}
+
+function handleKill(killEntry) {
+    // appendKillfeed is also invoked from the same SSE event; we add the X
+    // here. Resolve the victim clientNum by name.
+    if (!killEntry || !killEntry.victim) return;
+    const maxclients = maxclientsCache;
+    for (let i = 0; i < maxclients; i++) {
+        const info = getPlayerInfo(i);
+        if (info.name === killEntry.victim) {
+            const origin = playerOrigin(i);
+            if (origin) {
+                killXs.push({ x: origin[0], y: origin[1], t0: performance.now() });
+                scheduleRender(PLAYERS_DIRTY);
+            }
+            return;
+        }
+    }
+}
+
+function rgba(colour, alpha) {
+    return `rgba(${colour[0]}, ${colour[1]}, ${colour[2]}, ${alpha})`;
 }
 
 // ─── Dirty-flag render scheduling ────────────────────────────────────────────
@@ -219,30 +311,78 @@ function renderPlayers() {
     applyWorldTransform(playersCtx);
 
     const ctx = playersCtx;
-
-    // Draw shot traces first, under the player icons. Expired ones are dropped.
     const now = performance.now();
-    let aliveCount = 0;
-    for (let i = 0; i < traces.length; i++) {
-        const tr = traces[i];
-        const age = now - tr.t0;
-        if (age >= TRACE_TTL_MS) continue;
-        if (aliveCount !== i) traces[aliveCount] = tr;
-        aliveCount++;
-        const alpha = 1 - age / TRACE_TTL_MS;
-        const col = (tr.team !== undefined && tr.team < TEAM_COLOURS.length)
-            ? TEAM_COLOURS[tr.team] : DEFAULT_COLOUR;
-        const [sx0, sy0] = worldToSvg(tr.x0, tr.y0);
-        const [sx1, sy1] = worldToSvg(tr.x1, tr.y1);
-        ctx.globalAlpha = alpha;
-        ctx.strokeStyle = col.stroke;
-        ctx.lineWidth = 2 / transform.scale;
+
+    // ── Damage ring pulse (under player icons) ──────────────────────────
+    let aliveBursts = 0;
+    for (let i = 0; i < bursts.length; i++) {
+        const b = bursts[i];
+        const age = now - b.t0;
+        if (age >= RING_TTL_MS) continue;
+        if (aliveBursts !== i) bursts[aliveBursts] = b;
+        aliveBursts++;
+        // Re-anchor to the victim's current origin each frame.
+        const origin = playerOrigin(b.victim);
+        if (!origin) continue;
+        const [cx, cy] = worldToSvg(origin[0], origin[1]);
+        const t = age / RING_TTL_MS;         // 0..1
+        const alpha = 1 - t;
+        const radius = 16 + t * RING_EXPAND_PX;
+        const col = b.kind === 'blood' ? COLOUR_BLOOD : COLOUR_SPARKS;
         ctx.beginPath();
-        ctx.moveTo(sx0, sy0);
-        ctx.lineTo(sx1, sy1);
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = rgba(col, alpha * 0.9);
+        ctx.lineWidth = 2 / transform.scale;
         ctx.stroke();
     }
-    traces.length = aliveCount;
+    bursts.length = aliveBursts;
+
+    // ── Damage particles (above rings, under icons) ─────────────────────
+    let aliveParticles = 0;
+    for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        const age = now - p.t0;
+        if (age >= PARTICLE_TTL_MS) continue;
+        if (aliveParticles !== i) particles[aliveParticles] = p;
+        aliveParticles++;
+        const origin = playerOrigin(p.victim);
+        if (!origin) continue;
+        const [cx, cy] = worldToSvg(origin[0], origin[1]);
+        const tSec = age / 1000;
+        const x = cx + p.dx + p.vx * tSec;
+        const y = cy + p.dy + p.vy * tSec;
+        const alpha = 1 - age / PARTICLE_TTL_MS;
+        const col = p.kind === 'blood' ? COLOUR_BLOOD : COLOUR_SPARKS;
+        ctx.beginPath();
+        ctx.arc(x, y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = rgba(col, alpha);
+        ctx.fill();
+    }
+    particles.length = aliveParticles;
+
+    // ── Kill X marks (above everything, under the icons we're about to draw) ──
+    let aliveKills = 0;
+    for (let i = 0; i < killXs.length; i++) {
+        const k = killXs[i];
+        const age = now - k.t0;
+        if (age >= KILL_X_TTL_MS) continue;
+        if (aliveKills !== i) killXs[aliveKills] = k;
+        aliveKills++;
+        const t = age / KILL_X_TTL_MS;
+        const alpha = 1 - t;
+        const size = 14 + t * 10;
+        const [cx, cy] = worldToSvg(k.x, k.y);
+        ctx.strokeStyle = rgba(COLOUR_KILL, alpha);
+        ctx.lineWidth = 3 / transform.scale;
+        ctx.beginPath();
+        ctx.moveTo(cx - size, cy - size);
+        ctx.lineTo(cx + size, cy + size);
+        ctx.moveTo(cx + size, cy - size);
+        ctx.lineTo(cx - size, cy + size);
+        ctx.stroke();
+    }
+    killXs.length = aliveKills;
+
     ctx.globalAlpha = 1;
 
     const r = 16;
@@ -293,21 +433,48 @@ function renderPlayers() {
         const rightX = sx + Math.cos(ca + coneHalf) * coneLen;
         const rightY = sy + Math.sin(ca + coneHalf) * coneLen;
 
+        // Flash boost: while a recent muzzleflash is active, brighten the
+        // cone fill+stroke and extend slightly beyond the team palette.
+        const flash = flashes.get(ent.number);
+        let coneFill = col.cone;
+        let coneStroke = col.coneStroke;
+        let coneLineWidth = 1.5;
+        if (flash && flash.until > now) {
+            // 0 at end-of-flash, 1 at peak (now).
+            // We don't know the exact start, so approximate from remaining time.
+            const remaining = flash.until - now;
+            const dur = flashDurationMs(flash.weapon);
+            const intensity = Math.min(1, remaining / dur);
+            // Replace cone palette with a team-tinted bright version.
+            const baseFill = col.fill; // already has team colour at 0.85
+            coneFill = baseFill.replace(/[\d.]+\)$/, `${0.35 + intensity * 0.45})`);
+            coneStroke = col.stroke.replace(/[\d.]+\)$/, `${0.6 + intensity * 0.4})`);
+            coneLineWidth = 1.5 + intensity * 1.5;
+        }
+
         ctx.beginPath();
         ctx.moveTo(sx, sy);
         ctx.lineTo(leftX, leftY);
         ctx.lineTo(tipX, tipY);
         ctx.lineTo(rightX, rightY);
         ctx.closePath();
-        ctx.fillStyle = col.cone;
+        ctx.fillStyle = coneFill;
         ctx.fill();
-        ctx.strokeStyle = col.coneStroke;
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = coneStroke;
+        ctx.lineWidth = coneLineWidth;
         ctx.stroke();
     }
 
-    // Keep the render loop ticking while any trace is still fading.
-    if (traces.length > 0) scheduleRender(PLAYERS_DIRTY);
+    // Evict flashes that have fully expired so we don't keep the render loop
+    // alive indefinitely.
+    for (const [num, f] of flashes) {
+        if (f.until <= now) flashes.delete(num);
+    }
+
+    // Keep the render loop ticking while any FX is still alive.
+    if (flashes.size > 0 || bursts.length > 0 || particles.length > 0 || killXs.length > 0) {
+        scheduleRender(PLAYERS_DIRTY);
+    }
 }
 
 // ─── Caches ──────────────────────────────────────────────────────────────────
@@ -767,7 +934,9 @@ function connectSSE() {
     });
 
     es.addEventListener('kill', (e) => {
-        appendKillfeed(JSON.parse(e.data));
+        const entry = JSON.parse(e.data);
+        appendKillfeed(entry);
+        handleKill(entry);
     });
 
     es.addEventListener('hit', (e) => {
@@ -784,8 +953,12 @@ function connectSSE() {
         scoreboardState.layoutText = ev.text;
     });
 
-    es.addEventListener('shot', (e) => {
-        handleShot(JSON.parse(e.data));
+    es.addEventListener('flash', (e) => {
+        handleFlash(JSON.parse(e.data));
+    });
+
+    es.addEventListener('damage', (e) => {
+        handleDamage(JSON.parse(e.data));
     });
 
     es.addEventListener('error', () => {

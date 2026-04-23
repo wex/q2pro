@@ -19,7 +19,7 @@ import {
 } from './frame';
 import { BspFile } from './bsp';
 import { generateMapSvg } from './map-render';
-import { ShotTraceResolver } from './shot-trace';
+import { CombatFxResolver } from './combat-fx';
 
 const defaultHost = process.argv[2] || '127.0.0.1';
 const defaultPort = parseInt(process.argv[3] || '27910', 10);
@@ -47,33 +47,8 @@ const parser = new MvdFrameParser();
 const configstrings = new Map<number, string>();
 const players = new Map<number, PlayerState>();
 
-const shotTrace = new ShotTraceResolver();
-shotTrace.notePlayers(players);
-
-// Configstring slots holding "name\skin" for each player. Mirrors
-// `CS_PLAYERSKINS_OLD` / `CS_PLAYERSKINS_EXT` from the vanilla / extended
-// Q2 protocol, matching the lookup already used in public/app.js.
-const CS_PLAYERSKINS_OLD = 1312;
-const CS_PLAYERSKINS_EXT = 12862;
-const MAX_CLIENTS = 256;
-
-/**
- * Resolve a player's clientNum by their in-game name using the
- * CS_PLAYERSKINS configstrings. Returns undefined if no player entry
- * matches. Names are matched exactly; AQ2 forbids duplicate netnames
- * at join time so collisions are unexpected.
- */
-function resolveClientByName(name: string): number | undefined {
-    for (let i = 0; i < MAX_CLIENTS; i++) {
-        const cs = configstrings.get(CS_PLAYERSKINS_EXT + i)
-            ?? configstrings.get(CS_PLAYERSKINS_OLD + i);
-        if (!cs) continue;
-        const sep = cs.indexOf('\\');
-        const csName = sep === -1 ? cs : cs.slice(0, sep);
-        if (csName === name) return i;
-    }
-    return undefined;
-}
+const combatFx = new CombatFxResolver();
+combatFx.notePlayers(players);
 
 // ── Chat / kill-feed / scoreboard state ─────────────────────────
 
@@ -288,18 +263,7 @@ parser.onObituary = (ev: ObituaryEvent) => {
 };
 
 parser.onHit = (ev: HitEvent) => {
-    shotTrace.noteHit(ev.attacker);
     sseBroadcast('hit', { kind: 'dealt', ...ev });
-
-    // Best-effort synthetic trace from the "You hit NAME" print. This only
-    // fires on servers with `sv_mvd_nomsgs=0`; the default is 1, which
-    // filters these unicast prints out of the MVD stream. The primary
-    // mechanism is muzzleflash + blood-TE correlation — see
-    // `parser.onMuzzleFlash` and `ShotTraceResolver.handleTE`.
-    const victim = resolveClientByName(ev.victim);
-    if (victim === undefined) return;
-    const shot = shotTrace.handleHit(ev.attacker, victim);
-    if (shot) sseBroadcast('shot', shot);
 };
 
 parser.onHitTaken = (ev: HitTakenEvent) => {
@@ -311,13 +275,25 @@ parser.onLayout = (ev: LayoutEvent) => {
     sseBroadcast('layout', ev);
 };
 
+// TE_BLOOD / TE_SPARKS / TE_BULLET_SPARKS near a player → damage FX on that
+// player. Wall-impact sparks are rejected by the nearest-player distance cap
+// inside `CombatFxResolver`. All other TE types (explosions, rail trails,
+// etc.) are ignored by the combat-FX pipeline.
 parser.onTempEntity = (ev: TempEntityEvent) => {
-    const shot = shotTrace.handleTE(ev);
-    if (shot) sseBroadcast('shot', shot);
+    const dmg = combatFx.handleTE(ev);
+    if (dmg) sseBroadcast('damage', dmg);
 };
 
+// Every primary-fire muzzleflash surfaces as a per-shooter cone flash in
+// the UI. Multicast, so unaffected by `sv_mvd_nomsgs`.
 parser.onMuzzleFlash = (ev: MuzzleFlashEvent) => {
-    shotTrace.noteMuzzleFlash(ev.entity);
+    if (ev.entity <= 0) return;
+    sseBroadcast('flash', {
+        shooter: ev.entity - 1,
+        weapon: ev.weapon,
+        silenced: ev.silenced,
+        t: Date.now(),
+    });
 };
 
 // ── OOB status polling via UDP ───────────────────────────────────
@@ -399,8 +375,8 @@ function resetPipelineState(): void {
     parser.reset();
     configstrings.clear();
     players.clear();
-    shotTrace.reset();
-    shotTrace.notePlayers(players);
+    combatFx.reset();
+    combatFx.notePlayers(players);
     chatLog.length = 0;
     killFeed.length = 0;
     scoreboard.teamScores = { team1: 0, team2: 0, team3: 0 };

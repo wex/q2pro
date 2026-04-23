@@ -49,7 +49,7 @@ export {
     MuzzleFlashEvent,
 } from './frame';
 export {
-    ShotTraceResolver,
-    ShotEvent,
-    ShotTraceOptions,
-} from './shot-trace';
+    CombatFxResolver,
+    CombatFxOptions,
+    DamageEvent,
+} from './combat-fx';

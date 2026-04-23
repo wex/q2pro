@@ -97,7 +97,8 @@ curl           http://localhost:8080/demos
 ```
 
 See `doc/demo-replay.md` for the full endpoint and event reference, and
-`doc/shot-trace.md` for the `shot` SSE event emitted for weapon traces.
+`doc/combat-fx.md` for the `flash` / `damage` SSE events used by the
+map overlay FX.
 
 ## Tests
 
