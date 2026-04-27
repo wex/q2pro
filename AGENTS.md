@@ -65,6 +65,7 @@ The test runner is Jest with `ts-jest`. See `doc/testing.md` for the full guide.
 - Before opening a PR, run both `npm test` and `npm run build` from `ts-mvd/`. Where feasible, also smoke-test `npm run app` against a reachable Q2Pro GTV server.
 
 ## Workflow conventions
+- NEVER HALLUCINATE! Your work is really important and must be accurate.  
 - One feature per Git branch; branch name summarizes the feature.
 - Every new feature: add or extend a doc in `doc/` (e.g. `doc/<feature>.md`) covering scope, protocol touchpoints, and usage.
 - Follow existing code style (2-space indent, TS strict, named exports where present).
