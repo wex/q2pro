@@ -214,6 +214,13 @@ export interface StatsEvent {
     stats: Int16Array;
 }
 
+export interface DeathEvent {
+    /** Client number of the player who just died. */
+    clientNum: number;
+    /** World-space origin where the player died. */
+    origin: [number, number, number];
+}
+
 export interface MuzzleFlashEvent {
     /** Shooter edict number (1..max_edicts). Player clientNum = entity - 1. */
     entity: number;
@@ -266,6 +273,7 @@ export class MvdFrameParser {
     onTempEntity: ((event: TempEntityEvent) => void) | null = null;
     onStats: ((event: StatsEvent) => void) | null = null;
     onMuzzleFlash: ((event: MuzzleFlashEvent) => void) | null = null;
+    onDeath: ((event: DeathEvent) => void) | null = null;
 
     /**
      * Feed a raw MVD stream data buffer (the payload from GTS_STREAM_DATA).
@@ -1069,6 +1077,8 @@ export class MvdFrameParser {
             ps.stats = grown;
         }
 
+        const prevHealth = ps.stats.length > Stat.Health ? ps.stats[Stat.Health] : 0;
+
         if (this.psFlags & MSG_PS_EXTENSIONS_2) {
             const statbits = reader.readVarInt64();
             for (let i = 0; i < 64; i++) {
@@ -1090,6 +1100,14 @@ export class MvdFrameParser {
         }
 
         ps.frags = ps.stats[Stat.Frags] | 0;
+
+        // Death detection: STAT_HEALTH transitioning from >0 to <=0.
+        const newHealth = ps.stats[Stat.Health] | 0;
+        if (prevHealth > 0 && newHealth <= 0) {
+            const world = MvdFrameParser.originToWorld(ps.origin);
+            this.onDeath?.({ clientNum: ps.number, origin: world });
+        }
+
         this.onStats?.({ clientNum: ps.number, stats: ps.stats });
     }
 

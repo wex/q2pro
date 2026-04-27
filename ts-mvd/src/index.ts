@@ -47,6 +47,7 @@ export {
     TempEntityEvent,
     StatsEvent,
     MuzzleFlashEvent,
+    DeathEvent,
 } from './frame';
 export {
     CombatFxResolver,

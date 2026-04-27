@@ -67,8 +67,8 @@ const DEFAULT_COLOUR = { fill: 'rgba(140, 140, 140, 0.85)', stroke: 'rgba(200, 2
 //  2. Damage — particle burst + expanding ring on the victim when a blood
 //              or sparks TE lands on them. Yellow for sparks, red for blood.
 //              Rate-limited to one burst per victim per DAMAGE_COOLDOWN_MS.
-//  3. Kill X — fading red cross on the victim's last-known origin when an
-//              obituary fires.
+//  3. Death — skull glyph fading at the victim's death location, triggered
+//              by STAT_HEALTH transitioning to <= 0 server-side (svc 'death').
 //
 // All FX use performance.now() clocks so fading is smooth independent of
 // SSE delivery cadence. Every live FX keeps the players canvas ticking via
@@ -109,11 +109,11 @@ const RING_EXPAND_PX = 22;
 
 const DAMAGE_COOLDOWN_MS = 80;
 
-const KILL_X_TTL_MS = 800;
+const DEATH_ICON_TTL_MS = 1500;
 
 const COLOUR_BLOOD = [220, 40, 40];    // r,g,b
 const COLOUR_SPARKS = [255, 210, 40];
-const COLOUR_KILL = [255, 80, 80];
+const COLOUR_DEATH = [240, 240, 240];
 // Muzzle-flash hilite: whole cone is repainted in this hue while a flash is
 // active, so shooting reads at a glance regardless of the shooter's team.
 const COLOUR_FLASH = [255, 220, 80];
@@ -125,8 +125,9 @@ const flashes = new Map();
 const bursts = [];
 // particles: [{ victim, kind, t0, dx, dy, vx, vy, r }]  — flat array for efficient GC.
 const particles = [];
-// killXs: [{ x, y, t0 }] in world coords.
-const killXs = [];
+// deaths: [{ x, y, t0 }] in world coords. One entry per server-side
+// STAT_HEALTH →0 transition; rendered as a fading skull glyph.
+const deaths = [];
 // Rate-limit bookkeeping: clientNum → { t, kind }.
 const lastDamageByVictim = new Map();
 
@@ -186,22 +187,10 @@ function handleDamage(ev) {
     scheduleRender(PLAYERS_DIRTY);
 }
 
-function handleKill(killEntry) {
-    // appendKillfeed is also invoked from the same SSE event; we add the X
-    // here. Resolve the victim clientNum by name.
-    if (!killEntry || !killEntry.victim) return;
-    const maxclients = maxclientsCache;
-    for (let i = 0; i < maxclients; i++) {
-        const info = getPlayerInfo(i);
-        if (info.name === killEntry.victim) {
-            const origin = playerOrigin(i);
-            if (origin) {
-                killXs.push({ x: origin[0], y: origin[1], t0: performance.now() });
-                scheduleRender(PLAYERS_DIRTY);
-            }
-            return;
-        }
-    }
+function handleDeath(ev) {
+    if (!ev || !Array.isArray(ev.origin)) return;
+    deaths.push({ x: ev.origin[0], y: ev.origin[1], t0: performance.now() });
+    scheduleRender(PLAYERS_DIRTY);
 }
 
 function rgba(colour, alpha) {
@@ -373,28 +362,32 @@ function renderPlayers() {
     }
     particles.length = aliveParticles;
 
-    // ── Kill X marks (above everything, under the icons we're about to draw) ──
-    let aliveKills = 0;
-    for (let i = 0; i < killXs.length; i++) {
-        const k = killXs[i];
-        const age = now - k.t0;
-        if (age >= KILL_X_TTL_MS) continue;
-        if (aliveKills !== i) killXs[aliveKills] = k;
-        aliveKills++;
-        const t = age / KILL_X_TTL_MS;
+    // ── Death icons (skull glyph above everything, under live player icons) ──
+    let aliveDeaths = 0;
+    for (let i = 0; i < deaths.length; i++) {
+        const d = deaths[i];
+        const age = now - d.t0;
+        if (age >= DEATH_ICON_TTL_MS) continue;
+        if (aliveDeaths !== i) deaths[aliveDeaths] = d;
+        aliveDeaths++;
+        const t = age / DEATH_ICON_TTL_MS;
         const alpha = 1 - t;
-        const size = 14 + t * 10;
-        const [cx, cy] = worldToSvg(k.x, k.y);
-        ctx.strokeStyle = rgba(COLOUR_KILL, alpha);
+        // Slight grow-then-settle: 1.0 → 1.25 over the lifetime.
+        const size = 28 * (1 + t * 0.25);
+        const [cx, cy] = worldToSvg(d.x, d.y);
+        ctx.save();
+        ctx.font = `bold ${size}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
         ctx.lineWidth = 3 / transform.scale;
-        ctx.beginPath();
-        ctx.moveTo(cx - size, cy - size);
-        ctx.lineTo(cx + size, cy + size);
-        ctx.moveTo(cx + size, cy - size);
-        ctx.lineTo(cx - size, cy + size);
-        ctx.stroke();
+        ctx.strokeStyle = `rgba(0, 0, 0, ${alpha})`;
+        ctx.fillStyle = rgba(COLOUR_DEATH, alpha);
+        const glyph = '\u2620'; // ☠ SKULL AND CROSSBONES
+        ctx.strokeText(glyph, cx, cy);
+        ctx.fillText(glyph, cx, cy);
+        ctx.restore();
     }
-    killXs.length = aliveKills;
+    deaths.length = aliveDeaths;
 
     ctx.globalAlpha = 1;
 
@@ -433,6 +426,27 @@ function renderPlayers() {
             ctx.strokeText(info.name, sx, sy - r - 10);
             ctx.fillText(info.name, sx, sy - r - 10);
             ctx.font = playerFont;
+        }
+
+        // ── Health bar above the name ───────────────────────────────────
+        if (typeof ent.health === 'number') {
+            const hp = Math.max(0, Math.min(100, ent.health));
+            const barW = r * 2.2;
+            const barH = Math.max(3, 4 / transform.scale);
+            const barX = sx - barW / 2;
+            const barY = sy - r - 10 - nameFontSize - 2;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+            ctx.fillRect(barX, barY, barW, barH);
+            const fillW = barW * (hp / 100);
+            let hpColour;
+            if (hp >= 66) hpColour = 'rgba(40, 200, 70, 0.95)';
+            else if (hp >= 33) hpColour = 'rgba(230, 200, 50, 0.95)';
+            else hpColour = 'rgba(220, 50, 50, 0.95)';
+            ctx.fillStyle = hpColour;
+            ctx.fillRect(barX, barY, fillW, barH);
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(barX, barY, barW, barH);
         }
 
         const yaw = ent.viewangles[1];
@@ -484,7 +498,7 @@ function renderPlayers() {
     }
 
     // Keep the render loop ticking while any FX is still alive.
-    if (flashes.size > 0 || bursts.length > 0 || particles.length > 0 || killXs.length > 0) {
+    if (flashes.size > 0 || bursts.length > 0 || particles.length > 0 || deaths.length > 0) {
         scheduleRender(PLAYERS_DIRTY);
     }
 }
@@ -951,7 +965,10 @@ function connectSSE() {
     es.addEventListener('kill', (e) => {
         const entry = JSON.parse(e.data);
         appendKillfeed(entry);
-        handleKill(entry);
+    });
+
+    es.addEventListener('death', (e) => {
+        handleDeath(JSON.parse(e.data));
     });
 
     es.addEventListener('hit', (e) => {

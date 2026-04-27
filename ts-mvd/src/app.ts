@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { MvdClient } from './index';
 import { MvdDemoReader } from './demo';
-import { ClientState } from './protocol';
+import { ClientState, Stat } from './protocol';
 import {
     MvdFrameParser,
     PlayerState,
@@ -16,6 +16,7 @@ import {
     MuzzleFlashEvent,
     TempEntityEvent,
     TeamScores,
+    DeathEvent,
 } from './frame';
 import { BspFile } from './bsp';
 import { generateMapSvg } from './map-render';
@@ -205,6 +206,7 @@ parser.onFrame = (ev) => {
                 fov: p.fov,
                 gunindex: p.gunindex,
                 frags: p.frags,
+                health: p.stats.length > Stat.Health ? p.stats[Stat.Health] : undefined,
             };
         }),
         teamScores: ev.teamScores,
@@ -268,6 +270,10 @@ parser.onHit = (ev: HitEvent) => {
 
 parser.onHitTaken = (ev: HitTakenEvent) => {
     sseBroadcast('hit', { kind: 'taken', ...ev });
+};
+
+parser.onDeath = (ev: DeathEvent) => {
+    sseBroadcast('death', { clientNum: ev.clientNum, origin: ev.origin, t: Date.now() });
 };
 
 parser.onLayout = (ev: LayoutEvent) => {

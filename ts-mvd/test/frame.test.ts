@@ -1,5 +1,5 @@
 import { MvdDemoReader } from '../src/demo';
-import { MvdFrameParser, FrameEvent, ServerDataEvent, ConfigStringEvent, ChatEvent, ObituaryEvent, classifyHit, classifyChat, classifyObituary } from '../src/frame';
+import { MvdFrameParser, FrameEvent, ServerDataEvent, ConfigStringEvent, ChatEvent, ObituaryEvent, DeathEvent, classifyHit, classifyChat, classifyObituary } from '../src/frame';
 import { readDemoBytes } from './helpers/fixtures';
 
 interface ParseResult {
@@ -8,6 +8,7 @@ interface ParseResult {
     frames: FrameEvent[];
     chats: ChatEvent[];
     obits: ObituaryEvent[];
+    deaths: DeathEvent[];
     parseErrors: unknown[];
 }
 
@@ -18,6 +19,7 @@ function parseDemo(): ParseResult {
         frames: [],
         chats: [],
         obits: [],
+        deaths: [],
         parseErrors: [],
     };
 
@@ -36,6 +38,7 @@ function parseDemo(): ParseResult {
     });
     parser.onChat = (ev) => result.chats.push(ev);
     parser.onObituary = (ev) => result.obits.push(ev);
+    parser.onDeath = (ev) => result.deaths.push({ ...ev, origin: [...ev.origin] as [number, number, number] });
 
     const reader = new MvdDemoReader({ realtime: false });
     // Bypass the async drain path and feed messages synchronously into the parser.
@@ -87,6 +90,17 @@ describe('MvdFrameParser against demo.mvd2', () => {
         for (const f of result.frames) {
             expect(Number.isInteger(f.frameNumber)).toBe(true);
             expect(f.frameNumber).toBeGreaterThanOrEqual(0);
+        }
+    });
+
+    test('emits onDeath with finite world-space origin when STAT_HEALTH drops to <=0', () => {
+        // The bundled demo contains player deaths, so we expect at least one.
+        expect(result.deaths.length).toBeGreaterThan(0);
+        for (const d of result.deaths) {
+            expect(Number.isInteger(d.clientNum)).toBe(true);
+            expect(d.clientNum).toBeGreaterThanOrEqual(0);
+            expect(d.origin).toHaveLength(3);
+            for (const n of d.origin) expect(Number.isFinite(n)).toBe(true);
         }
     });
 

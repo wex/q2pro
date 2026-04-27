@@ -149,6 +149,8 @@ export enum TempEntityType {
 // STAT_TEAM3_SCORE=31. Vanilla Q2 uses different indices but its MVD streams
 // never set these, so decoding them with AQtion's layout is a no-op there.
 export enum Stat {
+    HealthIcon = 0,
+    Health = 1,
     Layouts = 13,
     Frags = 14,
     Team1Score = 26,
