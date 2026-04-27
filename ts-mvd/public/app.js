@@ -362,33 +362,6 @@ function renderPlayers() {
     }
     particles.length = aliveParticles;
 
-    // ── Death icons (skull glyph above everything, under live player icons) ──
-    let aliveDeaths = 0;
-    for (let i = 0; i < deaths.length; i++) {
-        const d = deaths[i];
-        const age = now - d.t0;
-        if (age >= DEATH_ICON_TTL_MS) continue;
-        if (aliveDeaths !== i) deaths[aliveDeaths] = d;
-        aliveDeaths++;
-        const t = age / DEATH_ICON_TTL_MS;
-        const alpha = 1 - t;
-        // Slight grow-then-settle: 1.0 → 1.25 over the lifetime.
-        const size = 28 * (1 + t * 0.25);
-        const [cx, cy] = worldToSvg(d.x, d.y);
-        ctx.save();
-        ctx.font = `bold ${size}px monospace`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.lineWidth = 3 / transform.scale;
-        ctx.strokeStyle = `rgba(0, 0, 0, ${alpha})`;
-        ctx.fillStyle = rgba(COLOUR_DEATH, alpha);
-        const glyph = '\u2620'; // ☠ SKULL AND CROSSBONES
-        ctx.strokeText(glyph, cx, cy);
-        ctx.fillText(glyph, cx, cy);
-        ctx.restore();
-    }
-    deaths.length = aliveDeaths;
-
     ctx.globalAlpha = 1;
 
     const r = 16;
@@ -490,6 +463,33 @@ function renderPlayers() {
         ctx.lineWidth = coneLineWidth;
         ctx.stroke();
     }
+
+    // ── Death icons (skull glyph painted last, on top of player icons) ──
+    let aliveDeaths = 0;
+    for (let i = 0; i < deaths.length; i++) {
+        const d = deaths[i];
+        const age = now - d.t0;
+        if (age >= DEATH_ICON_TTL_MS) continue;
+        if (aliveDeaths !== i) deaths[aliveDeaths] = d;
+        aliveDeaths++;
+        const t = age / DEATH_ICON_TTL_MS;
+        const alpha = 1 - t;
+        // Slight grow-then-settle: 1.0 → 1.25 over the lifetime.
+        const size = 28 * (1 + t * 0.25);
+        const [cx, cy] = worldToSvg(d.x, d.y);
+        ctx.save();
+        ctx.font = `bold ${size}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 3 / transform.scale;
+        ctx.strokeStyle = `rgba(0, 0, 0, ${alpha})`;
+        ctx.fillStyle = rgba(COLOUR_DEATH, alpha);
+        const glyph = '\u2620'; // ☠ SKULL AND CROSSBONES
+        ctx.strokeText(glyph, cx, cy);
+        ctx.fillText(glyph, cx, cy);
+        ctx.restore();
+    }
+    deaths.length = aliveDeaths;
 
     // Evict flashes that have fully expired so we don't keep the render loop
     // alive indefinitely.

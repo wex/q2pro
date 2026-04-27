@@ -44,6 +44,7 @@ The previous "kill X" rendering (anchored to obituary name lookup) is replaced b
 - TTL `DEATH_ICON_TTL_MS = 1500` ms (≈1.5 s, within the 1–2 s requested range).
 - Glyph `\u2620` (☠), sized 28 px with a slight 1.0 → 1.25 grow during the lifetime, alpha fading to 0.
 - Drawn with a black stroke for contrast on bright maps.
+- Painted last in `renderPlayers`, after the player icons/cones, so the skull always sits on top of any live player marker that overlaps the death spot.
 - Triggered by the SSE `death` event from the server (one entry per `STAT_HEALTH` 0→ transition).
 
 ### Reset semantics
