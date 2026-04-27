@@ -80,6 +80,27 @@ body {
     color: #888;
 }
 
+#status-time {
+    color: #cfcfcf;
+    font-variant-numeric: tabular-nums;
+}
+
+#scoreboard td .player-name.team-0 {
+    color: rgba(255, 160, 160, 0.95);
+}
+
+#scoreboard td .player-name.team-1 {
+    color: rgba(160, 190, 255, 0.95);
+}
+
+#scoreboard td .player-name.team-2 {
+    color: rgba(160, 255, 170, 0.95);
+}
+
+#scoreboard td .player-name {
+    font-weight: bold;
+}
+
 #panel {
     position: absolute;
     top: 10px;

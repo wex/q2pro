@@ -19,6 +19,7 @@ const elSessionError = document.getElementById('session-error');
 const elTabs = document.querySelectorAll('#session-modal .tab');
 const elTabPanels = document.querySelectorAll('#session-modal .tab-panel');
 const elMap = document.getElementById('status-map');
+const elTime = document.getElementById('status-time');
 const elEntities = document.getElementById('status-entities');
 const elScoreboardBody = document.querySelector('#scoreboard tbody');
 const elTeamScores = document.getElementById('team-scores');
@@ -806,11 +807,35 @@ function renderScoreboard() {
 
     rows.sort((a, b) => b.frags - a.frags || a.name.localeCompare(b.name));
 
+    // Apply team colouring only when there are >= 2 distinct teams. Pure FFA
+    // (every player on a unique team index) renders as plain white.
+    const teamMap = getTeamMap();
+    const distinctTeams = new Set(Object.values(teamMap));
+    const colourByTeam = distinctTeams.size >= 2 && distinctTeams.size < Object.keys(teamMap).length;
+
     elScoreboardBody.innerHTML = rows.map((r) => {
         const ping = pingForPlayer(r.name);
         const pingStr = ping == null ? '-' : String(ping);
-        return `<tr data-num="${r.number}"><td>${r.number}</td><td>${escapeHtml(r.name)}</td><td class="num">${r.frags}</td><td class="num">${pingStr}</td></tr>`;
+        const teamIdx = teamMap[r.number];
+        const teamCls = colourByTeam && teamIdx !== undefined && teamIdx < TEAM_COLOURS.length
+            ? ` team-${teamIdx}` : '';
+        const nameHtml = `<span class="player-name${teamCls}">${escapeHtml(r.name)}</span>`;
+        return `<tr data-num="${r.number}"><td>${r.number}</td><td>${nameHtml}</td><td class="num">${r.frags}</td><td class="num">${pingStr}</td></tr>`;
     }).join('');
+}
+
+function formatGametime(frameNumber) {
+    if (typeof frameNumber !== 'number' || frameNumber < 0) return '';
+    const totalSec = Math.floor(frameNumber / 10); // Q2 server runs at 10 Hz.
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
+function updateGametime(frameNumber) {
+    elTime.textContent = formatGametime(frameNumber);
 }
 
 function flashScoreboardRow(num, cls) {
@@ -917,6 +942,8 @@ function connectSSE() {
         elKillfeed.innerHTML = '';
         elChat.innerHTML = '';
         scoreboardState = { teamScores: { team1: 0, team2: 0, team3: 0 }, layoutsFlags: 0, layoutText: '', players: {} };
+        // Map change: reset elapsed gametime; the next frame event will start it.
+        updateGametime(0);
         renderScoreboard();
         scheduleRender(PLAYERS_DIRTY);
     });
@@ -946,6 +973,7 @@ function connectSSE() {
         players = data.players || [];
         teamMapCache = null; // player set may have changed
         updatePlayerCount();
+        if (typeof data.frameNumber === 'number') updateGametime(data.frameNumber);
 
         // Update scoreboard from frame-level stats. Merge so that a player
         // who briefly drops out of `data.players` (PPS_REMOVE on death /
