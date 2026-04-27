@@ -926,6 +926,17 @@ function connectSSE() {
         configstrings[index] = value;
         invalidateConfigCaches();
         checkMapChange();
+        // A cleared playerskin configstring signals client disconnect; drop
+        // their scoreboard row so leavers don't linger with stale frags.
+        if (value === '') {
+            const cap = Math.max(maxclientsCache, 256);
+            for (const base of [CS_PLAYERSKINS_OLD, CS_PLAYERSKINS_EXT]) {
+                if (index >= base && index < base + cap) {
+                    delete scoreboardState.players[index - base];
+                    break;
+                }
+            }
+        }
         renderScoreboard();
         scheduleRender(PLAYERS_DIRTY);
     });
@@ -936,14 +947,16 @@ function connectSSE() {
         teamMapCache = null; // player set may have changed
         updatePlayerCount();
 
-        // Update scoreboard from frame-level stats.
+        // Update scoreboard from frame-level stats. Merge so that a player
+        // who briefly drops out of `data.players` (PPS_REMOVE on death /
+        // respawn) keeps their accumulated frag count. Entries are cleared
+        // on serverdata (map change) and on the configstring listener below
+        // when their playerskin slot is emptied.
         if (data.teamScores) scoreboardState.teamScores = data.teamScores;
         if (typeof data.layoutsFlags === 'number') scoreboardState.layoutsFlags = data.layoutsFlags;
-        const sbPlayers = {};
         for (const p of data.players || []) {
-            sbPlayers[p.number] = { number: p.number, frags: p.frags || 0 };
+            scoreboardState.players[p.number] = { number: p.number, frags: p.frags || 0 };
         }
-        scoreboardState.players = sbPlayers;
         renderScoreboard();
 
         scheduleRender(PLAYERS_DIRTY);

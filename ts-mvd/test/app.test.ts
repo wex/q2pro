@@ -19,7 +19,8 @@ jest.mock('net', () => ({
     },
 }));
 
-import { httpServer, resetAppStateForTests, DEMOS_DIR } from '../src/app';
+import { httpServer, resetAppStateForTests, DEMOS_DIR, parser, getScoreboardForTests } from '../src/app';
+import { PlayerState } from '../src/frame';
 
 describe('HTTP control surface', () => {
     beforeEach(() => {
@@ -112,6 +113,71 @@ describe('HTTP control surface', () => {
             .post('/replay?file=does-not-exist.mvd2');
         expect(res.status).toBe(404);
         expect(res.body.error).toBe('not-found');
+    });
+
+    test('scoreboard frags persist across a frame where a player is absent (PPS_REMOVE)', () => {
+        // Build two synthetic frames. Frame B drops player #1 to simulate the
+        // brief PPS_REMOVE / inUse=false window after a death; the scoreboard
+        // must keep #1's last-known frag count (regression for the "scores
+        // reset to 0 on death" bug).
+        const mkPlayer = (number: number, frags: number): PlayerState => ({
+            number,
+            inUse: true,
+            pmType: 0,
+            origin: [0, 0, 0],
+            viewangles: [0, 0, 0],
+            viewoffset: [0, 0, 0],
+            fov: 90,
+            gunindex: 0,
+            rdflags: 0,
+            frags,
+            stats: new Int16Array(32),
+        });
+
+        parser.onFrame!({
+            frameNumber: 1,
+            players: [mkPlayer(0, 3), mkPlayer(1, 5)],
+            teamScores: { team1: 0, team2: 0, team3: 0 },
+            layoutsFlags: 0,
+        });
+        parser.onFrame!({
+            frameNumber: 2,
+            players: [mkPlayer(0, 4)],
+            teamScores: { team1: 0, team2: 0, team3: 0 },
+            layoutsFlags: 0,
+        });
+
+        const sb = getScoreboardForTests();
+        expect(sb.players[0]).toEqual({ number: 0, frags: 4 });
+        expect(sb.players[1]).toEqual({ number: 1, frags: 5 });
+    });
+
+    test('scoreboard drops a player when their playerskin configstring is cleared', () => {
+        const mkPlayer = (number: number, frags: number): PlayerState => ({
+            number,
+            inUse: true,
+            pmType: 0,
+            origin: [0, 0, 0],
+            viewangles: [0, 0, 0],
+            viewoffset: [0, 0, 0],
+            fov: 90,
+            gunindex: 0,
+            rdflags: 0,
+            frags,
+            stats: new Int16Array(32),
+        });
+
+        parser.onFrame!({
+            frameNumber: 1,
+            players: [mkPlayer(2, 7)],
+            teamScores: { team1: 0, team2: 0, team3: 0 },
+            layoutsFlags: 0,
+        });
+        expect(getScoreboardForTests().players[2]).toEqual({ number: 2, frags: 7 });
+
+        // Clearing CS_PLAYERSKINS_OLD + 2 simulates the disconnect signal.
+        parser.onConfigString!({ index: 1312 + 2, value: '' });
+        expect(getScoreboardForTests().players[2]).toBeUndefined();
     });
 
     test('POST /connect while replay is active returns 409', async () => {

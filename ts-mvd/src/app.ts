@@ -56,6 +56,14 @@ combatFx.notePlayers(players);
 const CHAT_LOG_MAX = 200;
 const KILL_FEED_MAX = 50;
 
+// CS_PLAYERSKINS base indices (vanilla and ext-limits layouts). When the
+// configstring at base+clientNum becomes empty, the slot is free and that
+// player has disconnected — drop their scoreboard entry.
+const CS_PLAYERSKINS_OLD = 1312;
+const CS_PLAYERSKINS_EXT = 12862;
+const CS_MAXCLIENTS_OLD = 30;
+const CS_MAXCLIENTS_EXT = 60;
+
 interface ChatEntry extends ChatEvent { t: number }
 interface KillEntry extends ObituaryEvent { t: number }
 
@@ -186,14 +194,16 @@ const origOnFrame = parser.onFrame;
 parser.onFrame = (ev) => {
     origOnFrame?.(ev);
 
-    // Keep the scoreboard in sync with live stats.
+    // Keep the scoreboard in sync with live stats. Merge rather than replace:
+    // a player who is briefly absent from ev.players (e.g. PPS_REMOVE on the
+    // tick they die / respawn) must keep their accumulated frags. Entries are
+    // pruned on map change (resetPipelineState / onServerData) and on player
+    // disconnect (empty CS_PLAYERSKINS configstring).
     scoreboard.teamScores = ev.teamScores;
     scoreboard.layoutsFlags = ev.layoutsFlags;
-    const sbPlayers: Record<number, { number: number; frags: number }> = {};
     for (const p of ev.players) {
-        sbPlayers[p.number] = { number: p.number, frags: p.frags };
+        scoreboard.players[p.number] = { number: p.number, frags: p.frags };
     }
-    scoreboard.players = sbPlayers;
 
     sseBroadcast('frame', {
         frameNumber: ev.frameNumber,
@@ -240,6 +250,21 @@ parser.onServerData = (ev) => {
 const origOnConfigString = parser.onConfigString;
 parser.onConfigString = (ev) => {
     origOnConfigString?.(ev);
+    // Drop scoreboard entries when a player slot's playerskin configstring is
+    // cleared (the server's signal that the client has disconnected).
+    if (ev.value === '') {
+        const maxclients = parseInt(
+            configstrings.get(CS_MAXCLIENTS_EXT) ?? configstrings.get(CS_MAXCLIENTS_OLD) ?? '0',
+            10,
+        );
+        for (const base of [CS_PLAYERSKINS_OLD, CS_PLAYERSKINS_EXT]) {
+            if (ev.index >= base && ev.index < base + Math.max(maxclients, 256)) {
+                const num = ev.index - base;
+                delete scoreboard.players[num];
+                break;
+            }
+        }
+    }
     sseBroadcast('configstring', ev);
 };
 
@@ -685,6 +710,11 @@ export {
     DEMOS_DIR,
     DEFAULT_DEMO,
 };
+
+/** Snapshot of the in-memory scoreboard, for tests. */
+export function getScoreboardForTests(): typeof scoreboard {
+    return scoreboard;
+}
 
 /**
  * Reset all in-memory session state. Intended for test isolation so suites
