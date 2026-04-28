@@ -1,6 +1,7 @@
 /dist
 /node_modules
 /maps
+/paks
 /textures
 /colormap.pcx
 /*.svg

@@ -94,11 +94,22 @@ curl -X POST   -H 'content-type: application/json' \
 curl -X POST   http://localhost:8080/disconnect
 curl           http://localhost:8080/state
 curl           http://localhost:8080/demos
+curl           http://localhost:8080/paks
 ```
 
 See `doc/demo-replay.md` for the full endpoint and event reference, and
 `doc/combat-fx.md` for the `flash` / `damage` SSE events used by the
 map overlay FX.
+
+## Pak / Pkz asset fallback
+
+Drop original Quake 2 `.pak` archives or Q2Pro `.pkz` (zip) archives into
+`ts-mvd/paks/`. At startup `app.ts` indexes every archive and uses it as a
+fallback for missing maps and wal textures: `GET /maps/<name>` will resolve
+`<name>.bsp` from `maps/` first, then from any indexed archive, and the SVG
+renderer pulls wal textures and `colormap.pcx` the same way. The currently
+loaded archives are exposed via `GET /paks`. See `doc/pak-vfs.md` for the
+full design and format notes.
 
 ## Tests
 

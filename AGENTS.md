@@ -21,6 +21,7 @@ Source lives in `ts-mvd/src/`:
 - `map-render.ts` — map visualization.
 - `demo.ts` — `MvdDemoReader` for `.mvd2` replay files.
 - `texture-export.ts` — texture asset export helper.
+- `pak.ts` — read-only `.pak` / `.pkz` (zip) asset indexer used as fallback by `app.ts`.
 - `app.ts` — HTTP/UDP control surface wiring demo + client pipelines.
 - `index.ts` — public exports.
 - `ts-mvd/public/` — static assets for the browser demo (`index.html`, `app.js`, `app.css`).
@@ -86,4 +87,5 @@ The test runner is Jest with `ts-jest`. See `doc/testing.md` for the full guide.
 - `doc/demo-replay.md` — demo replay pipeline.
 - `doc/mvd2-demo-reader.md` — `.mvd2` reader details.
 - `doc/texture-export.md` — texture export tooling.
+- `doc/pak-vfs.md` — pak/pkz asset fallback design.
 - `doc/how-to-use-devin.md` — onboarding + workflow for Devin.

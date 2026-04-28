@@ -54,3 +54,4 @@ export {
     CombatFxOptions,
     DamageEvent,
 } from './combat-fx';
+export { PakIndex, PakEntry, PakMethod } from './pak';

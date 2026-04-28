@@ -1,6 +1,7 @@
 import * as dgram from 'node:dgram';
 import * as http from 'node:http';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { MvdClient } from './index';
 import { MvdDemoReader } from './demo';
@@ -21,6 +22,7 @@ import {
 import { BspFile } from './bsp';
 import { generateMapSvg } from './map-render';
 import { CombatFxResolver } from './combat-fx';
+import { PakIndex } from './pak';
 
 const defaultHost = process.argv[2] || '127.0.0.1';
 const defaultPort = parseInt(process.argv[3] || '27910', 10);
@@ -462,8 +464,99 @@ function stopReplay(): boolean {
 // ── HTTP server ─────────────────────────────────────────────────
 
 const MAPS_DIR = path.resolve(__dirname, '..', 'maps');
+const TEXTURES_DIR = path.resolve(__dirname, '..', 'textures');
+const COLORMAP_PATH = path.resolve(__dirname, '..', 'colormap.pcx');
 const DEMOS_DIR = path.resolve(__dirname, '..', 'assets', 'demos');
+const PAKS_DIR = path.resolve(__dirname, '..', 'paks');
 const HTTP_PORT = parseInt(process.env.HTTP_PORT || '8080', 10);
+
+// ── Pak/Pkz asset fallback ──────────────────────────────────────
+//
+// Index every `.pak` / `.pkz` under `paks/` at startup. When a map or
+// texture asset is missing under `maps/` / `textures/`, we materialize it
+// from the indexed archives into a per-process overlay dir so that the
+// existing buffer-based parsers (bsp.ts, wal.ts, map-render.ts) can be
+// used unchanged.
+const pakIndex = PakIndex.load(PAKS_DIR);
+if (pakIndex.size > 0) {
+    console.log(`[pak] Indexed ${pakIndex.size} entries from ${pakIndex.archives.length} archive(s) in ${PAKS_DIR}`);
+} else if (fs.existsSync(PAKS_DIR)) {
+    console.log(`[pak] No archives found in ${PAKS_DIR}`);
+}
+
+const PAK_OVERLAY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'ts-mvd-pak-'));
+const overlayMaterialized = new Set<string>();
+
+function materializeFromPak(relPath: string): string | null {
+    const norm = relPath.replace(/\\/g, '/').toLowerCase();
+    const overlayPath = path.join(PAK_OVERLAY_DIR, norm);
+    if (overlayMaterialized.has(norm)) {
+        return overlayPath;
+    }
+    const buf = pakIndex.read(norm);
+    if (!buf) return null;
+    fs.mkdirSync(path.dirname(overlayPath), { recursive: true });
+    fs.writeFileSync(overlayPath, buf);
+    overlayMaterialized.add(norm);
+    return overlayPath;
+}
+
+/**
+ * Build a textures-directory view that contains every wal texture referenced
+ * by the given BSP, falling back to the pak index for any missing files.
+ * If all required textures already exist under `TEXTURES_DIR` we return that
+ * path directly; otherwise we ensure the overlay mirrors them and return
+ * the overlay path.
+ */
+function prepareTexturesDir(bsp: BspFile): string {
+    if (pakIndex.size === 0) return TEXTURES_DIR;
+    const unique = new Set<string>();
+    for (const t of bsp.texinfo) unique.add(t.name);
+
+    // First pass: are any required wals missing from disk?
+    let needOverlay = false;
+    for (const name of unique) {
+        if (!fs.existsSync(path.join(TEXTURES_DIR, name + '.wal'))) {
+            needOverlay = true;
+            break;
+        }
+    }
+    if (!needOverlay) return TEXTURES_DIR;
+
+    // Build a unified overlay: symlink fs-resident wals, extract missing
+    // ones from the pak index. The overlay then satisfies all lookups via
+    // a single directory passed to loadWalTexture().
+    const overlayTex = path.join(PAK_OVERLAY_DIR, 'textures');
+    for (const name of unique) {
+        const overlayPath = path.join(overlayTex, name + '.wal');
+        const norm = `textures/${name.toLowerCase()}.wal`;
+        if (overlayMaterialized.has(norm)) continue;
+        fs.mkdirSync(path.dirname(overlayPath), { recursive: true });
+        const fsPath = path.join(TEXTURES_DIR, name + '.wal');
+        if (fs.existsSync(fsPath)) {
+            try { fs.symlinkSync(fsPath, overlayPath); }
+            catch { fs.copyFileSync(fsPath, overlayPath); }
+            overlayMaterialized.add(norm);
+            continue;
+        }
+        const buf = pakIndex.read(`textures/${name}.wal`);
+        if (!buf) continue;
+        fs.writeFileSync(overlayPath, buf);
+        overlayMaterialized.add(norm);
+    }
+    return overlayTex;
+}
+
+function prepareColormap(): string {
+    if (fs.existsSync(COLORMAP_PATH)) return COLORMAP_PATH;
+    // Common Q2 layouts: pics/colormap.pcx (q2pro) or just colormap.pcx.
+    const candidates = ['pics/colormap.pcx', 'colormap.pcx'];
+    for (const rel of candidates) {
+        const p = materializeFromPak(rel);
+        if (p) return p;
+    }
+    return COLORMAP_PATH; // will likely fail, but keeps existing error path
+}
 
 const MAX_REQUEST_BODY = 4 * 1024;
 
@@ -504,9 +597,15 @@ const bspCache = new Map<string, BspFile>();
 
 function loadBsp(mapName: string): BspFile | null {
     if (bspCache.has(mapName)) return bspCache.get(mapName)!;
-    const filePath = path.join(MAPS_DIR, `${mapName}.bsp`);
-    if (!fs.existsSync(filePath)) return null;
-    const bsp = BspFile.loadFile(filePath);
+    const fsPath = path.join(MAPS_DIR, `${mapName}.bsp`);
+    if (fs.existsSync(fsPath)) {
+        const bsp = BspFile.loadFile(fsPath);
+        bspCache.set(mapName, bsp);
+        return bsp;
+    }
+    const buf = pakIndex.read(`maps/${mapName}.bsp`);
+    if (!buf) return null;
+    const bsp = BspFile.load(buf);
     bspCache.set(mapName, bsp);
     return bsp;
 }
@@ -606,6 +705,14 @@ const httpServer = http.createServer((req, res) => {
         return;
     }
 
+    if (url.pathname === '/paks' && req.method === 'GET') {
+        sendJson(res, 200, {
+            archives: pakIndex.archives,
+            entryCount: pakIndex.size,
+        });
+        return;
+    }
+
     if (url.pathname === '/state' && req.method === 'GET') {
         const mode = currentReplay
             ? 'replay'
@@ -631,8 +738,8 @@ const httpServer = http.createServer((req, res) => {
             return;
         }
         try {
-            const texturesDir = path.resolve(__dirname, '..', 'textures');
-            const colormapPath = path.resolve(__dirname, '..', 'colormap.pcx');
+            const texturesDir = prepareTexturesDir(bsp);
+            const colormapPath = prepareColormap();
             const svg = generateMapSvg(bsp, mapName, { showGrid: url.searchParams.has('grid'), texturesDir, colormapPath });
             res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
             res.end(svg);
@@ -709,6 +816,8 @@ export {
     stopReplay,
     DEMOS_DIR,
     DEFAULT_DEMO,
+    pakIndex,
+    PAKS_DIR,
 };
 
 /** Snapshot of the in-memory scoreboard, for tests. */
@@ -737,6 +846,7 @@ if (require.main === module) {
         console.log(`[http]   GET  /events       — SSE stream`);
         console.log(`[http]   GET  /state        — current mode (idle/live/replay)`);
         console.log(`[http]   GET  /demos        — list demo filenames in assets/demos/`);
+        console.log(`[http]   GET  /paks         — pak/pkz archives indexed at startup`);
         console.log(`[http]   POST /connect      — start live GTV (body: { host?, port? }; defaults ${defaultHost}:${defaultPort})`);
         console.log(`[http]   POST /disconnect   — stop live GTV`);
         console.log(`[http]   POST /replay[?file=...] — replay a .mvd2 demo`);
