@@ -113,9 +113,14 @@ parser.onFrame = (ev) => {
         return `  #${p.number} pos=(${x}, ${y}, ${z}) angles=(${pitch}, ${yaw})`;
     });
 
-    // Update players map
+    // Update players map. The MVD observer dummy (the slot at
+    // serverData.clientNum) is filtered out here so it is never rendered,
+    // tracked by combat FX, or shown in the scoreboard. See
+    // `src/server/mvd/game.c` in Q2Pro for the analogous `player == mvd->dummy`
+    // filters.
     players.clear();
     for (const p of ev.players) {
+        if (p.isMvdDummy) continue;
         players.set(p.number, p);
     }
 };
@@ -204,23 +209,26 @@ parser.onFrame = (ev) => {
     scoreboard.teamScores = ev.teamScores;
     scoreboard.layoutsFlags = ev.layoutsFlags;
     for (const p of ev.players) {
+        if (p.isMvdDummy) continue;
         scoreboard.players[p.number] = { number: p.number, frags: p.frags };
     }
 
     sseBroadcast('frame', {
         frameNumber: ev.frameNumber,
-        players: ev.players.map((p) => {
-            const pos = MvdFrameParser.originToWorld(p.origin);
-            return {
-                number: p.number,
-                origin: pos,
-                viewangles: p.viewangles,
-                fov: p.fov,
-                gunindex: p.gunindex,
-                frags: p.frags,
-                health: p.stats.length > Stat.Health ? p.stats[Stat.Health] : undefined,
-            };
-        }),
+        players: ev.players
+            .filter((p) => !p.isMvdDummy)
+            .map((p) => {
+                const pos = MvdFrameParser.originToWorld(p.origin);
+                return {
+                    number: p.number,
+                    origin: pos,
+                    viewangles: p.viewangles,
+                    fov: p.fov,
+                    gunindex: p.gunindex,
+                    frags: p.frags,
+                    health: p.stats.length > Stat.Health ? p.stats[Stat.Health] : undefined,
+                };
+            }),
         teamScores: ev.teamScores,
         layoutsFlags: ev.layoutsFlags,
     });

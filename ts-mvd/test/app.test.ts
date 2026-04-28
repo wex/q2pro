@@ -132,6 +132,7 @@ describe('HTTP control surface', () => {
             rdflags: 0,
             frags,
             stats: new Int16Array(32),
+            isMvdDummy: false,
         });
 
         parser.onFrame!({
@@ -165,6 +166,7 @@ describe('HTTP control surface', () => {
             rdflags: 0,
             frags,
             stats: new Int16Array(32),
+            isMvdDummy: false,
         });
 
         parser.onFrame!({
@@ -178,6 +180,35 @@ describe('HTTP control surface', () => {
         // Clearing CS_PLAYERSKINS_OLD + 2 simulates the disconnect signal.
         parser.onConfigString!({ index: 1312 + 2, value: '' });
         expect(getScoreboardForTests().players[2]).toBeUndefined();
+    });
+
+    test('scoreboard skips MVD dummy slot (isMvdDummy=true)', () => {
+        const mkPlayer = (number: number, frags: number, isMvdDummy = false): PlayerState => ({
+            number,
+            inUse: true,
+            pmType: 0,
+            origin: [0, 0, 0],
+            viewangles: [0, 0, 0],
+            viewoffset: [0, 0, 0],
+            fov: 90,
+            gunindex: 0,
+            rdflags: 0,
+            frags,
+            stats: new Int16Array(32),
+            isMvdDummy,
+        });
+
+        parser.onFrame!({
+            frameNumber: 1,
+            players: [mkPlayer(0, 3), mkPlayer(7, 0, true), mkPlayer(1, 5)],
+            teamScores: { team1: 0, team2: 0, team3: 0 },
+            layoutsFlags: 0,
+        });
+
+        const sb = getScoreboardForTests();
+        expect(sb.players[0]).toEqual({ number: 0, frags: 3 });
+        expect(sb.players[1]).toEqual({ number: 1, frags: 5 });
+        expect(sb.players[7]).toBeUndefined();
     });
 
     test('POST /connect while replay is active returns 409', async () => {

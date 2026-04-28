@@ -114,6 +114,21 @@ describe('MvdFrameParser against demo.mvd2', () => {
             for (const n of p.viewangles) expect(Number.isFinite(n)).toBe(true);
         }
     });
+
+    test('isMvdDummy is set only on the serverdata.clientNum slot', () => {
+        // The demo's serverdata advertises a clientNum; the parser must flag
+        // exactly that slot across every frame (or none, when clientNum=-1).
+        const sd = result.serverData[0];
+        for (const f of result.frames) {
+            for (const p of f.players) {
+                if (sd.clientNum === -1) {
+                    expect(p.isMvdDummy).toBe(false);
+                } else {
+                    expect(p.isMvdDummy).toBe(p.number === sd.clientNum);
+                }
+            }
+        }
+    });
 });
 
 describe('MvdFrameParser misc', () => {

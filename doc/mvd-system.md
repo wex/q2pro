@@ -76,6 +76,17 @@ server that acts as a spectator proxy. It:
 The dummy is created in `dummy_create()`, spawned in `dummy_spawn()`, and ticked
 every frame in `dummy_run()`.
 
+#### ts-mvd client-side filter
+
+`ts-mvd/src/frame.ts` mirrors the Q2Pro server-side `player == mvd->dummy`
+checks (see `src/server/mvd/parse.c:~1004` and `src/server/mvd/game.c:~1840`)
+on the client side: `MvdFrameParser` remembers `serverData.clientNum` and
+stamps every `PlayerState` with `isMvdDummy = (number === clientNum)`. When
+`clientNum === -1` (SinglePov streams) the flag is always `false`.
+`ts-mvd/src/app.ts` skips any flagged slot when populating the `players`
+Map, the SSE `frame` payload, and `scoreboard.players`, so the recorder is
+never rendered on the map overlay or listed on the scoreboard.
+
 ### 1.3 Frame Capture Pipeline
 
 Each server frame, the MVD recorder captures the full game state:

@@ -114,6 +114,14 @@ export interface PlayerState {
     frags: number;
     /** Last-seen STAT_* values (indexed by stat number, 0-initialised). */
     stats: Int16Array;
+    /**
+     * True if this slot is the MVD observer "dummy" client (the player
+     * at `serverData.clientNum`). Q2Pro reserves one game client slot per
+     * MVD stream for the recorder; see `mvd->dummy` in
+     * `src/server/mvd/{parse,game}.c`. When `clientNum === -1` (SinglePov)
+     * no dummy exists and this stays `false` for every slot.
+     */
+    isMvdDummy: boolean;
 }
 
 export interface TeamScores {
@@ -250,6 +258,10 @@ export class MvdFrameParser {
     private layoutsFlags = 0;
     private statsArrayLen = 32;
 
+    // Slot number of the MVD observer dummy (from serverdata.clientNum).
+    // `-1` means no dummy (SinglePov streams).
+    private mvdDummyNum = -1;
+
     // Print dedup state: the Q2Pro MVD stream records one mvd_unicast_r per
     // recipient for every PF_cprintf(ent, PRINT_CHAT|PRINT_MEDIUM, ...) call,
     // so a single chat line or obituary arrives as N identical svc_print
@@ -335,6 +347,7 @@ export class MvdFrameParser {
         this.teamScores = { team1: 0, team2: 0, team3: 0 };
         this.layoutsFlags = 0;
         this.statsArrayLen = 32;
+        this.mvdDummyNum = -1;
         this.printSeenThisTick.clear();
     }
 
@@ -353,6 +366,7 @@ export class MvdFrameParser {
             rdflags: 0,
             frags: 0,
             stats: new Int16Array(this.statsArrayLen),
+            isMvdDummy: number === this.mvdDummyNum,
         };
         this.playerStates.set(number, ps);
         return ps;
@@ -363,6 +377,7 @@ export class MvdFrameParser {
     private parseServerData(reader: BufferReader, extrabits: number): void {
         this.playerStates.clear();
         this.frameNumber = 0;
+        this.mvdDummyNum = -1;
         this.printSeenThisTick.clear();
 
         const protocol = reader.readInt32LE();
@@ -403,6 +418,7 @@ export class MvdFrameParser {
         const servercount = reader.readInt32LE();
         const gamedir = reader.readString();
         const clientNum = reader.readInt16LE();
+        this.mvdDummyNum = clientNum;
 
         // Parse configstrings
         const configstrings = new Map<number, string>();
@@ -450,6 +466,10 @@ export class MvdFrameParser {
         const activePlayers: PlayerState[] = [];
         for (const ps of this.playerStates.values()) {
             if (ps.inUse) {
+                // Re-evaluate isMvdDummy every frame: serverdata may have
+                // arrived after the first time this slot was seen, and the
+                // dummy number can change across map rotations.
+                ps.isMvdDummy = ps.number === this.mvdDummyNum;
                 activePlayers.push({
                     ...ps,
                     origin: [...ps.origin],

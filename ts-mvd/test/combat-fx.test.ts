@@ -16,6 +16,7 @@ function makePlayer(number: number, worldXyz: [number, number, number]): PlayerS
         rdflags: 0,
         frags: 0,
         stats: new Int16Array(32),
+        isMvdDummy: false,
     };
 }
 
