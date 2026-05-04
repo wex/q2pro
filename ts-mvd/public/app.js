@@ -894,7 +894,7 @@ function updateGametime(frameNumber) {
     elTime.textContent = formatGametime(frameNumber);
 }
 
-elScoreboardBody.addEventListener('click', (e) => {
+elScoreboardBody.addEventListener('mousedown', (e) => {
     const row = e.target.closest('tr[data-num]');
     if (!row) return;
     const num = parseInt(row.dataset.num, 10);
