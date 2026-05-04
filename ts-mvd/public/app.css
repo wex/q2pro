@@ -227,6 +227,19 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
+#scoreboard tbody tr {
+    cursor: pointer;
+}
+
+#scoreboard tbody tr:hover td {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+#scoreboard tbody tr.locked td {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+
 #scoreboard tr.hit-dealt td {
     animation: flashDealt 0.5s ease-out;
 }

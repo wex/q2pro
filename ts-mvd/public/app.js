@@ -218,7 +218,9 @@ function scheduleRender(flags) {
 function renderFrame() {
     rafScheduled = false;
     applyLockCamera();
-    const flags = dirty;
+    // When locked the camera may have moved: always re-render both layers so
+    // the map canvas doesn't lag behind the players canvas.
+    const flags = lockedPlayerNum !== null ? dirty | MAP_DIRTY | PLAYERS_DIRTY : dirty;
     dirty = 0;
     if (flags & MAP_DIRTY) renderMap();
     if (flags & PLAYERS_DIRTY) renderPlayers();
@@ -242,6 +244,15 @@ function hitTestPlayer(cx, cy) {
         if ((sx - ex) ** 2 + (sy - ey) ** 2 <= r * r) return ent;
     }
     return null;
+}
+
+function setLock(num) {
+    lockedPlayerNum = num;
+    elScoreboardBody.querySelectorAll('tr.locked').forEach(r => r.classList.remove('locked'));
+    if (num !== null) {
+        const row = elScoreboardBody.querySelector(`tr[data-num="${num}"]`);
+        if (row) row.classList.add('locked');
+    }
 }
 
 function applyLockCamera() {
@@ -864,7 +875,8 @@ function renderScoreboard() {
         const teamCls = colourByTeam && teamIdx !== undefined && teamIdx < TEAM_COLOURS.length
             ? ` team-${teamIdx}` : '';
         const nameHtml = `<span class="player-name${teamCls}">${escapeHtml(r.name)}</span>`;
-        return `<tr data-num="${r.number}"><td>${r.number}</td><td>${nameHtml}</td><td class="num">${r.frags}</td><td class="num">${pingStr}</td></tr>`;
+        const lockedCls = r.number === lockedPlayerNum ? ' locked' : '';
+        return `<tr data-num="${r.number}"${lockedCls ? ` class="locked"` : ''}><td>${r.number}</td><td>${nameHtml}</td><td class="num">${r.frags}</td><td class="num">${pingStr}</td></tr>`;
     }).join('');
 }
 
@@ -881,6 +893,14 @@ function formatGametime(frameNumber) {
 function updateGametime(frameNumber) {
     elTime.textContent = formatGametime(frameNumber);
 }
+
+elScoreboardBody.addEventListener('click', (e) => {
+    const row = e.target.closest('tr[data-num]');
+    if (!row) return;
+    const num = parseInt(row.dataset.num, 10);
+    setLock(lockedPlayerNum === num ? null : num);
+    scheduleRender(MAP_DIRTY | PLAYERS_DIRTY);
+});
 
 function flashScoreboardRow(num, cls) {
     const row = elScoreboardBody.querySelector(`tr[data-num="${num}"]`);
@@ -1121,7 +1141,7 @@ window.addEventListener('mousemove', (e) => {
         const dx = e.clientX - dragStart.x;
         const dy = e.clientY - dragStart.y;
         if (dx * dx + dy * dy > 16) {   // 4 px travel threshold
-            lockedPlayerNum = null;
+            setLock(null);
         }
     }
     transform = { ...transform, tx: e.clientX - drag.x, ty: e.clientY - drag.y };
@@ -1133,7 +1153,7 @@ window.addEventListener('mouseup', (e) => {
         ((e.clientX - dragStart.x) ** 2 + (e.clientY - dragStart.y) ** 2) > 16;
     if (!wasDrag) {
         const hit = hitTestPlayer(e.clientX, e.clientY);
-        lockedPlayerNum = hit ? hit.number : null;
+        setLock(hit ? hit.number : null);
         scheduleRender(PLAYERS_DIRTY);
     }
     drag = null;
@@ -1142,7 +1162,7 @@ window.addEventListener('mouseup', (e) => {
 });
 
 playersCanvas.addEventListener('dblclick', () => {
-    lockedPlayerNum = null;
+    setLock(null);
     fitToScreen();
     scheduleRender(MAP_DIRTY | PLAYERS_DIRTY);
 });
