@@ -28,6 +28,7 @@ const elChat = document.getElementById('chat');
 const elBtnTextures = document.getElementById('btn-textures');
 
 let texturesEnabled = true;      // toggled by Tex button / T hotkey
+let lockedPlayerNum = null;      // null = free camera; integer = locked client slot
 let mapBitmap = null;           // ImageBitmap or HTMLCanvasElement
 let mapBitmapScale = 0;         // pixels per world unit used for current bitmap
 let mapSvgBlobUrl = null;       // current SVG blob URL (for re-raster)
@@ -216,11 +217,43 @@ function scheduleRender(flags) {
 
 function renderFrame() {
     rafScheduled = false;
+    applyLockCamera();
     const flags = dirty;
     dirty = 0;
     if (flags & MAP_DIRTY) renderMap();
     if (flags & PLAYERS_DIRTY) renderPlayers();
     maybeScheduleRaster();
+}
+
+// ─── Player camera lock ──────────────────────────────────────────────────────
+
+function cssToSvg(cx, cy) {
+    return [(cx - transform.tx) / transform.scale,
+    (cy - transform.ty) / transform.scale];
+}
+
+function hitTestPlayer(cx, cy) {
+    if (!mapBounds) return null;
+    const [sx, sy] = cssToSvg(cx, cy);
+    const r = 16;
+    for (const ent of players) {
+        if (ent.number < 0 || ent.number >= maxclientsCache) continue;
+        const [ex, ey] = worldToSvg(ent.origin[0], ent.origin[1]);
+        if ((sx - ex) ** 2 + (sy - ey) ** 2 <= r * r) return ent;
+    }
+    return null;
+}
+
+function applyLockCamera() {
+    if (lockedPlayerNum === null || !mapBounds) return;
+    const ent = players.find(p => p.number === lockedPlayerNum);
+    if (!ent) return;
+    const [sx, sy] = worldToSvg(ent.origin[0], ent.origin[1]);
+    transform = {
+        ...transform,
+        tx: window.innerWidth / 2 - sx * transform.scale,
+        ty: window.innerHeight / 2 - sy * transform.scale,
+    };
 }
 
 // ─── Canvas sizing ───────────────────────────────────────────────────────────
@@ -384,6 +417,14 @@ function renderPlayers() {
         const [sx, sy] = worldToSvg(ent.origin[0], ent.origin[1]);
         const teamIdx = teamMap[ent.number];
         const col = (teamIdx !== undefined && teamIdx < TEAM_COLOURS.length) ? TEAM_COLOURS[teamIdx] : DEFAULT_COLOUR;
+
+        if (ent.number === lockedPlayerNum) {
+            ctx.beginPath();
+            ctx.arc(sx, sy, r + 6, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.lineWidth = 2 / transform.scale;
+            ctx.stroke();
+        }
 
         ctx.beginPath();
         ctx.arc(sx, sy, r, 0, Math.PI * 2);
@@ -1066,24 +1107,42 @@ playersCanvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 let drag = null;
+let dragStart = null;   // { x, y } CSS px recorded on mousedown for travel detection
 
 playersCanvas.addEventListener('mousedown', (e) => {
     drag = { x: e.clientX - transform.tx, y: e.clientY - transform.ty };
+    dragStart = { x: e.clientX, y: e.clientY };
     playersCanvas.classList.add('dragging');
 });
 
 window.addEventListener('mousemove', (e) => {
     if (!drag) return;
+    if (lockedPlayerNum !== null && dragStart) {
+        const dx = e.clientX - dragStart.x;
+        const dy = e.clientY - dragStart.y;
+        if (dx * dx + dy * dy > 16) {   // 4 px travel threshold
+            lockedPlayerNum = null;
+        }
+    }
     transform = { ...transform, tx: e.clientX - drag.x, ty: e.clientY - drag.y };
     scheduleRender(MAP_DIRTY | PLAYERS_DIRTY);
 });
 
-window.addEventListener('mouseup', () => {
+window.addEventListener('mouseup', (e) => {
+    const wasDrag = dragStart &&
+        ((e.clientX - dragStart.x) ** 2 + (e.clientY - dragStart.y) ** 2) > 16;
+    if (!wasDrag) {
+        const hit = hitTestPlayer(e.clientX, e.clientY);
+        lockedPlayerNum = hit ? hit.number : null;
+        scheduleRender(PLAYERS_DIRTY);
+    }
     drag = null;
+    dragStart = null;
     playersCanvas.classList.remove('dragging');
 });
 
 playersCanvas.addEventListener('dblclick', () => {
+    lockedPlayerNum = null;
     fitToScreen();
     scheduleRender(MAP_DIRTY | PLAYERS_DIRTY);
 });
