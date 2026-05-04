@@ -211,6 +211,16 @@ describe('HTTP control surface', () => {
         expect(sb.players[7]).toBeUndefined();
     });
 
+    test('GET /maps/{unknown} returns 404', async () => {
+        const res = await request(httpServer).get('/maps/no_such_map');
+        expect(res.status).toBe(404);
+    });
+
+    test('GET /maps/{unknown}?notextures returns 404 (param does not break routing)', async () => {
+        const res = await request(httpServer).get('/maps/no_such_map?notextures');
+        expect(res.status).toBe(404);
+    });
+
     test('POST /connect while replay is active returns 409', async () => {
         const r1 = await request(httpServer).post('/replay?file=demo.mvd2');
         expect(r1.status).toBe(202);

@@ -25,7 +25,9 @@ const elScoreboardBody = document.querySelector('#scoreboard tbody');
 const elTeamScores = document.getElementById('team-scores');
 const elKillfeed = document.getElementById('killfeed');
 const elChat = document.getElementById('chat');
+const elBtnTextures = document.getElementById('btn-textures');
 
+let texturesEnabled = true;      // toggled by Tex button / T hotkey
 let mapBitmap = null;           // ImageBitmap or HTMLCanvasElement
 let mapBitmapScale = 0;         // pixels per world unit used for current bitmap
 let mapSvgBlobUrl = null;       // current SVG blob URL (for re-raster)
@@ -707,7 +709,8 @@ function rasterizeSvg(blobUrl, bounds, scale) {
 async function loadMap(levelname) {
     elMap.textContent = `${levelname} (loading...)`;
     try {
-        const res = await fetch(MAP_URL + encodeURIComponent(levelname));
+        const mapQuery = texturesEnabled ? '' : '?notextures';
+        const res = await fetch(MAP_URL + encodeURIComponent(levelname) + mapQuery);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const svgText = await res.text();
 
@@ -1226,6 +1229,23 @@ elReplayForm.addEventListener('submit', async (e) => {
         showSessionError(`Replay failed: ${err.message}`);
     } finally {
         submitBtn.disabled = false;
+    }
+});
+
+function toggleTextures() {
+    texturesEnabled = !texturesEnabled;
+    elBtnTextures.textContent = texturesEnabled ? 'Tex \u2713' : 'Tex \u2717';
+    elBtnTextures.classList.toggle('tex-off', !texturesEnabled);
+    if (currentMapname) loadMap(currentMapname);
+}
+
+elBtnTextures.addEventListener('click', toggleTextures);
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 't' || e.key === 'T') {
+        const tag = document.activeElement ? document.activeElement.tagName : '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        toggleTextures();
     }
 });
 

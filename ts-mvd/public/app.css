@@ -49,6 +49,30 @@ body {
     z-index: 3;
 }
 
+#btn-textures {
+    padding: 2px 8px;
+    background: rgba(30, 120, 60, 0.55);
+    color: #aef0be;
+    border: 1px solid rgba(100, 220, 130, 0.45);
+    border-radius: 3px;
+    font: inherit;
+    cursor: pointer;
+}
+
+#btn-textures:hover {
+    background: rgba(40, 150, 75, 0.7);
+}
+
+#btn-textures.tex-off {
+    background: rgba(60, 60, 60, 0.55);
+    color: #888;
+    border-color: rgba(140, 140, 140, 0.35);
+}
+
+#btn-textures.tex-off:hover {
+    background: rgba(80, 80, 80, 0.7);
+}
+
 #status-stop {
     margin-left: 4px;
     padding: 2px 8px;

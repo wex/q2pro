@@ -746,8 +746,9 @@ const httpServer = http.createServer((req, res) => {
             return;
         }
         try {
-            const texturesDir = prepareTexturesDir(bsp);
-            const colormapPath = prepareColormap();
+            const noTextures = url.searchParams.has('notextures');
+            const texturesDir = noTextures ? undefined : prepareTexturesDir(bsp);
+            const colormapPath = noTextures ? undefined : prepareColormap();
             const svg = generateMapSvg(bsp, mapName, { showGrid: url.searchParams.has('grid'), texturesDir, colormapPath });
             res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
             res.end(svg);
