@@ -237,7 +237,7 @@ function cssToSvg(cx, cy) {
 function hitTestPlayer(cx, cy) {
     if (!mapBounds) return null;
     const [sx, sy] = cssToSvg(cx, cy);
-    const r = 16;
+    const r = 24;   // larger than the drawn radius (16) for easier clicking
     for (const ent of players) {
         if (ent.number < 0 || ent.number >= maxclientsCache) continue;
         const [ex, ey] = worldToSvg(ent.origin[0], ent.origin[1]);
@@ -1149,8 +1149,12 @@ window.addEventListener('mousemove', (e) => {
 });
 
 window.addEventListener('mouseup', (e) => {
-    const wasDrag = dragStart &&
-        ((e.clientX - dragStart.x) ** 2 + (e.clientY - dragStart.y) ** 2) > 16;
+    if (!dragStart) {
+        // mousedown didn't come from the canvas; ignore for lock purposes
+        drag = null;
+        return;
+    }
+    const wasDrag = (e.clientX - dragStart.x) ** 2 + (e.clientY - dragStart.y) ** 2 > 16;
     if (!wasDrag) {
         const hit = hitTestPlayer(e.clientX, e.clientY);
         setLock(hit ? hit.number : null);
