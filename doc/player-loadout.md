@@ -2,7 +2,8 @@
 
 Surfaces per-player health, current weapon, selected item, and ammo on the
 browser scoreboard, driven by MVD stream data documented in
-[fable-search.md](fable-search.md).
+[fable-search.md](fable-search.md). Camera-lock behaviour that depends on
+alive/loadout is in [player-lock.md](player-lock.md).
 
 ## Scope
 
@@ -21,14 +22,53 @@ browser scoreboard, driven by MVD stream data documented in
   the last HP/weapon/item/ammo on the scoreboard after brief `PPS_REMOVE` gaps
   (death/respawn). Cache entry is deleted when that slot's playerskin
   configstring is cleared (disconnect) or on `serverdata` (map change).
+- **Sticky weapon (while alive):** if VWEP/`gunindex`/ammo-icon resolution
+  returns empty for a still-alive player, the UI keeps the last known weapon
+  label (important for scoped sniper where `gunindex` is 0). Cleared on death.
 
 Never-streamed configstring-only rows still appear for frags with
 `-` in the live columns.
 
+## Scoreboard UI
+
+Headers: **Name | HP | Ammo | Frags**.
+
+Each row’s name cell is:
+
+```
+[weapon slot][item slot] name
+```
+
+with a 1px gap between slots and between slots and the name
+(`td.name-cell` + `.loadout-icons` in `public/app.css`).
+
+| Slot state | Render |
+|------------|--------|
+| No weapon/item | Empty 20×20 placeholder (`.sb-icon-empty`) |
+| Label + mapped PNG | `<img class="sb-icon" src="/assets/…">` |
+| Label, no map / image `onerror` | Red text (`.sb-icon-label`), e.g. Grapple |
+
+### Icon asset map (`public/app.js`)
+
+| Label | File |
+|-------|------|
+| MK23 | `w_mk23.png` |
+| MP5 | `w_mp5.png` |
+| M4 | `w_m4.png` |
+| M3 | `w_super90.png` |
+| HC | `w_cannon.png` |
+| SSG | `w_sniper.png` |
+| Dual | `w_akimbo.png` |
+| Knife | `w_knife.png` |
+| G | `a_m61frag.png` |
+| Sil / Slip / Band / Kev / Helm / Laser | `p_silencer`, `slippers`, `p_bandolier`, `i_jacketarmor`, `p_rebreather`, `p_laser` |
+
+Grapple has no PNG by design.
+
 ## Data pipeline
 
 ```
-packetplayers  ──► PlayerState (stats, gunindex, pmType)
+packetplayers  ──► PlayerState (stats, gunindex, pmType, fov)
 packetentities ──► cumulative player-edict skinnum/modelindex2
                          │
                          ▼
@@ -39,6 +79,7 @@ packetentities ──► cumulative player-edict skinnum/modelindex2
                          │
                          ▼
               SSE frame / snapshot players[]
+              (weapon, item, ammo, clips, alive, scoped, …)
                          │
                          ▼
          public/app.js scoreboard + loadoutCache
@@ -46,48 +87,50 @@ packetentities ──► cumulative player-edict skinnum/modelindex2
 
 ### Weapon resolution (AQ2/TNG)
 
+Order in `resolveWeaponTypeNum` / `resolveWeaponLabel`
+([`ts-mvd/src/player-loadout.ts`](../ts-mvd/src/player-loadout.ts)):
+
 1. Prefer entity VWEP: `modelindex2 === 255` ⇒ `weaponTypeNum = skinnum >> 8`
-   (see `ShowGun` in `src/action/p_weapon.c`).
+   (see `ShowGun` in `src/action/p_weapon.c`). **Unaffected by sniper zoom.**
 2. Else match `CS_MODELS + gunindex` path against known view models
-   (`v_blast` → MK23, `v_machn` → MP5, …).
-3. `gunindex` may be 0 while scoped (`sv_mvd_nogun` also strips it).
-4. Else map ammo HUD icons: `STAT_CLIP_ICON` / `STAT_AMMO_ICON` →
-   `a_clip`→**MK23**, `a_shells`→**M3** (shared families; Dual/HC collapse to
-   these defaults). Other ammo icons (`a_bullets`, `a_mag`, …) stay unresolved.
-5. UI keeps **last known weapon** while the player stays alive when resolution
-   returns empty (scoped sniper / brief VWEP gaps). Cleared on death.
+   (`v_blast` → MK23, `v_machn` → MP5, `v_sniper` → SSG, `v_dual` → Dual, …).
+3. `gunindex` may be 0 while scoped (`fov != 90` in `p_weapon.c`) or when
+   `sv_mvd_nogun` strips view models — do **not** treat that as “unarmed”.
+4. Else map ammo HUD icons (`STAT_CLIP_ICON` then `STAT_AMMO_ICON` →
+   `CS_IMAGES`): `a_clip`→**MK23**, `a_shells`→**M3**. Dual shares pistol
+   clips with MK23; HC shares shells with M3. Other icons (`a_bullets`,
+   `a_mag`, `a_m4`, …) stay unresolved at this step.
+5. UI sticky last-known weapon while alive (see above).
+
+Short labels: MK23, MP5, M4, M3, HC, SSG, Dual, Knife, G, Grapple.
 
 ### Selected item
 
-Primary signal: `STAT_ITEMS_ICON` (19) → `CS_IMAGES + index` (classic base
-544, extended 10302). AQ2 writes the HUD icon for a carried special here
-(cycling through Kev/Helm/Band/Sil/Slip/Laser when several are held).
-
-Icon paths map to short labels: `p_silencer`→Sil, `slippers`→Slip,
-`p_bandolier`→Band, `i_jacketarmor`→Kev, `p_laser`→Laser,
-`p_rebreather`→Helm.
+Primary: `STAT_ITEMS_ICON` (19) → `CS_IMAGES` (classic base 544, extended
+10302). AQ2 cycles the HUD icon among carried specials
+(Kev/Helm/Band/Sil/Slip/Laser). The scoreboard shows the **current** icon
+in that rotation, not a full inventory list.
 
 Fallback: `STAT_SELECTED_ITEM` → `CS_ITEMS`, but **only** for known special
-pickup names. `selected_item` usually indexes the equipped weapon (full
-names like "MK23 Pistol"), which must not appear in the Item column.
+pickup names. `selected_item` usually indexes the equipped weapon (e.g.
+`"MK23 Pistol"`), which must not appear as the item.
 
 ### Ammo
 
 From `stats[]` when alive (`pmType === PM_NORMAL` and `STAT_HEALTH > 0`):
 
-- `STAT_AMMO` — rounds in magazine
+- `STAT_AMMO` — rounds in magazine (displayed as `ammo/clips`)
 - `STAT_CLIP` — spare magazines
-- `STAT_GRENADES` — raw HUD value (may alternate with medkit)
+- `STAT_GRENADES` — raw HUD value (may alternate with medkit; not shown on
+  the scoreboard column)
 
-Dead / away-in-frame rows show `-` for HP/Ammo. Each row always reserves two
-20×20 slots before the name (weapon + item): empty when the player has none;
-PNG icon when mapped; **red label text** when a label exists but the asset is
-unmapped or fails to load (e.g. Grapple).
+Dead / away rows show `-` for HP/Ammo; weapon/item slots use empty
+placeholders when there is no sticky alive loadout.
 
-Scoreboard puts those slots immediately before the player name (1px gap) under
-a single **Name** column; headers are Name / HP / Ammo / Frags. Icons come from
-`public/assets/` via a label→filename map in `public/app.js`
-(`WEAPON_ICON` / `ITEM_ICON`).
+### Scoped
+
+SSE also carries `scoped: boolean` (`fov < 90` or `STAT_SNIPER_ICON != 0`).
+Used for loadout cache metadata; map overlay scope FX is optional/future.
 
 ## Files
 
@@ -97,13 +140,15 @@ a single **Name** column; headers are Name / HP / Ammo / Frags. Icons come from
 | `ts-mvd/src/frame.ts` | Cumulative player-edict VWEP state → `weaponTypeNum` |
 | `ts-mvd/src/protocol.ts` | Extended `Stat` / `PmType` |
 | `ts-mvd/src/app.ts` | SSE enrichment via `serializePlayerForSse` |
-| `ts-mvd/public/app.js` | Scoreboard columns + sticky `loadoutCache` |
+| `ts-mvd/public/app.js` | Icons, sticky `loadoutCache`, scoreboard layout |
+| `ts-mvd/public/assets/` | Weapon/item PNGs |
+| `ts-mvd/test/player-loadout.test.ts` | Resolver unit tests |
 
 ## Limitations
 
-- Weapon/item short labels are **AQ2/TNG-specific**; unknown CS names show
-  the raw pickup string or `-`.
-- Sticky can display stale loadout for a connected client no longer in the
+- Labels and icon maps are **AQ2/TNG-specific**.
+- Ammo-icon fallback collapses Dual→MK23 and HC→M3.
+- Sticky can show stale loadout for a connected client no longer in the
   stream (e.g. spectating). Map layer stays current-frame only.
-- Inventory rotation icons (`STAT_WEAPONS_ICON` / `STAT_ITEMS_ICON`) are
-  out of scope.
+- Full inventory accumulation across `STAT_WEAPONS_ICON` /
+  `STAT_ITEMS_ICON` rotations is out of scope (current special only).

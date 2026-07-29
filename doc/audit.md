@@ -135,13 +135,24 @@ the following compound it:
   `MvdClientOptions` and the client never requests `GTF_DEFLATE`. Also, "Run Example" points to
   `src/example.ts`, which does not exist (the actual entry point is `src/app.ts` via
   `npm run app`).
-- **`AGENTS.md`** says `app.test.ts` runs supertest against "the exported Express app" — it's a
-  plain `node:http` server, no Express. The module map omits `combat-fx.ts`; the test-suite list
-  omits `combat-fx.test.ts` and `pak.test.ts`; the reference-doc list omits `doc/combat-fx.md`,
-  `doc/chat-dedup.md`, `doc/player-lock.md`, `doc/texture-toggle.md`,
-  `doc/player-health-and-death-icon.md`, `doc/ui-team-colours-and-gametime.md`.
-- **`doc/testing.md`** layout section lists five suites; `combat-fx.test.ts` and `pak.test.ts`
-  are missing.
+- **`AGENTS.md`** (as of audit date) omitted several modules/docs from the module map and
+  reference list. Feature docs now include `doc/player-loadout.md`, `doc/player-lock.md`,
+  `doc/combat-fx.md`, `doc/chat-dedup.md`, `doc/texture-toggle.md`,
+  `doc/player-health-and-death-icon.md`, `doc/ui-team-colours-and-gametime.md`,
+  `doc/fable-search.md` (research). Keep `AGENTS.md` in sync when adding modules.
+- **`doc/testing.md`** — layout previously listed five suites; now includes
+  `player-loadout`, `combat-fx`, and `pak` (synced 2026-07-30).
+- **`doc/fable-search.md` §8** — weapon/ammo/scope consumer gaps partially closed by
+  `player-loadout`; inventory accumulator still open (synced 2026-07-30).
+- **`doc/player-lock.md`** — follow-mode panel + viewport clamp documented (synced 2026-07-30).
+
+### Doc sync note (2026-07-30)
+
+Browser follow-mode (hide kill feed/chat; single-row scoreboard while target alive;
+clamp pan while locked) and loadout icons / sticky weapon / ammo-icon fallback are
+documented in `player-lock.md` and `player-loadout.md`. Audit bug **#7** (stale players
+on empty frames) appears addressed in current `app.ts` (`players.clear()` every frame);
+re-verify before closing that item.
 
 ## Test coverage gaps
 
@@ -179,7 +190,10 @@ lines — the whole map-rendering pipeline). Also untested behaviours:
 7. Make `BufferReader.readBytes` throw on under-read; clear the tick timer in
    `MvdDemoReader.playBuffer` (bugs 4, 9).
 8. Add a diagnostics hook for unknown MVD/svc opcodes in `frame.ts`.
-9. Sync docs: remove `deflate` and `example.ts` from README, fix AGENTS.md/testing.md lists.
+9. Sync docs: remove `deflate` and `example.ts` from README; keep AGENTS.md
+    module/reference lists current (`player-loadout`, `combat-fx`, `pak`, …).
+    Partial sync done 2026-07-30 for `testing.md` / `fable-search.md` /
+    `player-loadout.md` / `player-lock.md` / this audit drift section.
 10. Add tests for `bsp.ts`/`wal.ts`/`map-render.ts` and the `/maps` endpoint; cover reconnect
     logic in `client.test.ts`.
 11. Remove dead code (unused `lines`, wal noop, duplicated stream-start, grid opacity ternary);

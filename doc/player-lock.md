@@ -66,5 +66,9 @@ A thin white ring (`rgba(255,255,255,0.85)`, 2 px, radius `r + 6`) is drawn behi
 
 | File | Change |
 |------|--------|
-| `ts-mvd/public/app.js` | Lock helpers + follow-mode scoreboard filter / panel class |
+| `ts-mvd/public/app.js` | Lock helpers, follow-mode scoreboard filter / panel class, `clampTransformToViewport` |
 | `ts-mvd/public/app.css` | `#panel.follow-mode` hides kill feed + chat |
+
+## Related
+
+- [player-loadout.md](player-loadout.md) — alive / sticky loadout signals used by follow-mode scoreboard filtering.

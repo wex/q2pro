@@ -19,12 +19,15 @@ npm run test:watch # watch mode
 ```
 ts-mvd/test/
   helpers/
-    fixtures.ts      # DEMO_PATH, buildMvd2 synth helper
-  buffer.test.ts     # BufferReader / BufferWriter roundtrips, varint
-  demo.test.ts       # MvdDemoReader: magic, truncation, EOF, realtime pacing
-  frame.test.ts      # MvdFrameParser driven by demo.mvd2; originToWorld; reset
-  client.test.ts     # MvdClient state machine (mocked `net.Socket`)
-  app.test.ts        # HTTP control surface via supertest
+    fixtures.ts           # DEMO_PATH, buildMvd2 synth helper
+  buffer.test.ts          # BufferReader / BufferWriter roundtrips, varint
+  demo.test.ts            # MvdDemoReader: magic, truncation, EOF, realtime pacing
+  frame.test.ts           # MvdFrameParser driven by demo.mvd2; originToWorld; reset
+  client.test.ts          # MvdClient state machine (mocked `net.Socket`)
+  app.test.ts             # HTTP control surface via supertest
+  player-loadout.test.ts  # AQ2 weapon/item/ammo resolvers
+  combat-fx.test.ts       # CombatFxResolver hit/muzzleflash → damage events
+  pak.test.ts             # PakIndex .pak / .pkz fallback
 ```
 
 ## Configuration
@@ -38,7 +41,10 @@ ts-mvd/test/
 
 ## Testing conventions
 
-- Pure modules (`buffer`, `demo`, `frame`) are fully isolated — no mocks.
+- Pure modules (`buffer`, `demo`, `frame`, `player-loadout`) are fully
+  isolated — no mocks.
+- `combat-fx.test.ts` drives the resolver with synthetic frame/player
+  inputs (no network).
 - `client.test.ts` mocks the `net` module by returning a `FakeSocket` that
   extends `EventEmitter`, letting tests drive `connect`/`data`/`close`
   events synchronously.

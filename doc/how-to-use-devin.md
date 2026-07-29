@@ -128,4 +128,8 @@ Before merging a Devin PR, verify:
 - `doc/testing.md` — Jest/ts-jest layout and conventions.
 - `doc/mvd-system.md` — MVD subsystem deep dive.
 - `doc/network.md` — wire protocol reference.
+- `doc/fable-search.md` — AQ2 MVD player/weapon/item/ammo research notes.
+- `doc/player-loadout.md` — scoreboard HP/weapon/item/ammo + sticky cache.
+- `doc/player-lock.md` — camera lock, follow-mode panel, viewport clamp.
+- `doc/combat-fx.md` — muzzleflash / hit damage FX.
 - `ts-mvd/README.md` — user-facing API and events.

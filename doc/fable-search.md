@@ -243,22 +243,25 @@ needs the same treatment for `CS_MODELS`, `CS_IMAGES`, `CS_ITEMS`.
 ## 8. Relevance to ts-mvd
 
 Already present in `ts-mvd/src/frame.ts`: per-player `inuse`, `gunindex`,
-full `stats[]` parsing (32/64-wide), dummy-slot detection, name tracking.
+full `stats[]` parsing (32/64-wide), dummy-slot detection, name tracking,
+and cumulative player-edict VWEP (`weaponTypeNum` when `modelindex2 === 255`).
 
-Gaps a follow-up feature could close:
+### Implemented in ts-mvd (see [player-loadout.md](player-loadout.md))
 
-1. **Weapon resolver** — combine `entity_state.skinnum >> 8` (primary,
-   needs `modelindex2 == 255` check in the entity parser) with
-   `gunindex → CS_MODELS` (secondary) into a `weapon` field on the player
-   model, using the typeNum table in §4.1.
-2. **Ammo/loadout view** — surface `STAT_AMMO`, `STAT_CLIP`,
-   `STAT_GRENADES` (with grenade/medkit disambiguation via
-   `STAT_GRENADE_ICON`) per player, gated on alive state.
-3. **Inventory accumulator** — track distinct `STAT_WEAPONS_ICON` /
-   `STAT_ITEMS_ICON` image indices between deaths to list carried special
-   weapons/items; resolve names via `CS_IMAGES`.
-4. **Scope indicator** — `STAT_SNIPER_ICON != 0` or `fov < 90` marks a
-   scoped sniper (useful on the map overlay).
+1. **Weapon resolver** — VWEP `skinnum >> 8`, then `gunindex → CS_MODELS`,
+   then pistol/shotgun ammo icons (`a_clip`→MK23, `a_shells`→M3), plus UI
+   sticky last-known weapon while alive (covers scoped sniper `gunindex === 0`).
+2. **Ammo/loadout view** — `STAT_AMMO` / `STAT_CLIP` on the scoreboard
+   (`ammo/clips`); alive-gated. Grenade/medkit disambiguation via
+   `STAT_GRENADE_ICON` is still not surfaced as its own column.
+3. **Scope flag** — SSE `scoped` from `STAT_SNIPER_ICON` / `fov < 90`
+   (`isScoped` in `player-loadout.ts`). Map-overlay scope ring not drawn yet.
+
+### Still open
+
+4. **Inventory accumulator** — track distinct `STAT_WEAPONS_ICON` /
+   `STAT_ITEMS_ICON` indices between deaths for a full carried list.
+   Scoreboard currently shows only the **current** `STAT_ITEMS_ICON` special.
 
 ## 9. Gotchas observed in the C code
 
