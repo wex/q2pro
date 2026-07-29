@@ -917,7 +917,7 @@ function renderScoreboard() {
         }
 
         const clsAttr = rowCls ? ` class="${rowCls}"` : '';
-        return `<tr data-num="${r.number}"${clsAttr}><td>${r.number}</td><td>${nameHtml}</td><td class="num">${hp}</td><td class="wpn">${wpn}</td><td class="item">${item}</td><td class="num">${ammo}</td><td class="num">${r.frags}</td></tr>`;
+        return `<tr data-num="${r.number}"${clsAttr}><td class="wpn">${wpn}</td><td class="item">${item}</td><td>${nameHtml}</td><td class="num">${hp}</td><td class="num">${ammo}</td><td class="num">${r.frags}</td></tr>`;
     }).join('');
 }
 
