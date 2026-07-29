@@ -112,6 +112,11 @@ describe('MvdFrameParser against demo.mvd2', () => {
             expect(p.viewangles).toHaveLength(3);
             for (const n of p.origin) expect(Number.isFinite(n)).toBe(true);
             for (const n of p.viewangles) expect(Number.isFinite(n)).toBe(true);
+            // weaponTypeNum is optional (AQ2 VWEP); when present must be a finite int.
+            if (p.weaponTypeNum !== undefined) {
+                expect(Number.isInteger(p.weaponTypeNum)).toBe(true);
+                expect(p.weaponTypeNum).toBeGreaterThan(0);
+            }
         }
     });
 

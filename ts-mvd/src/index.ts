@@ -24,6 +24,7 @@ export {
     SvcOp,
     TempEntityType,
     Stat,
+    PmType,
 } from './protocol';
 export { BufferReader, BufferWriter } from './buffer';
 export {
@@ -55,3 +56,14 @@ export {
     DamageEvent,
 } from './combat-fx';
 export { PakIndex, PakEntry, PakMethod } from './pak';
+export {
+    resolveWeaponLabel,
+    resolveWeaponTypeNum,
+    extractAmmo,
+    isAlive,
+    isScoped,
+    weaponLabel,
+    AQ2_WEAPON_LABELS,
+    CS_MODELS_OLD,
+    CS_MODELS_EXT,
+} from './player-loadout';

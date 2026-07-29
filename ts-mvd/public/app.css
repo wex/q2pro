@@ -227,6 +227,24 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
+#scoreboard td.wpn {
+    font-size: 11px;
+    max-width: 4.5em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#scoreboard tbody tr.dead td,
+#scoreboard tbody tr.away td {
+    opacity: 0.55;
+}
+
+#scoreboard tbody tr.dead td.wpn,
+#scoreboard tbody tr.dead td.num {
+    color: #888;
+}
+
 #scoreboard tbody tr {
     cursor: pointer;
 }

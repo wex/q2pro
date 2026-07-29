@@ -151,11 +151,32 @@ export enum TempEntityType {
 export enum Stat {
     HealthIcon = 0,
     Health = 1,
+    AmmoIcon = 2,
+    Ammo = 3,
+    SelectedIcon = 6,
+    HelpIcon = 11,
+    SelectedItem = 12,
     Layouts = 13,
     Frags = 14,
+    ClipIcon = 16,
+    Clip = 17,
+    SniperIcon = 18,
+    ItemsIcon = 19,
+    WeaponsIcon = 20,
     Team1Score = 26,
     Team2Score = 27,
+    GrenadeIcon = 28,
+    Grenades = 29,
     Team3Score = 31,
+}
+
+/** pmove.pm_type values from inc/shared/shared.h */
+export enum PmType {
+    Normal = 0,
+    Spectator = 1,
+    Dead = 2,
+    Gib = 3,
+    Freeze = 4,
 }
 
 // Client connection states

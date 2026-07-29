@@ -35,6 +35,8 @@ let mapSvgBlobUrl = null;       // current SVG blob URL (for re-raster)
 let mapBounds = null;
 let currentMapname = '';
 let players = [];
+/** Sticky last-seen loadout per client slot (cleared on playerskin CS empty / map change). */
+let loadoutCache = {};
 let transform = { tx: 0, ty: 0, scale: 1 };
 let configstrings = {};
 let serverStatus = null;
@@ -633,17 +635,29 @@ function invalidateConfigCaches() {
     recomputeMaxclients();
 }
 
-function countActiveSkins() {
-    let count = 0;
-    for (let i = 0; i < maxclientsCache; i++) {
-        const cs = configstrings[CS_PLAYERSKINS_EXT + i] || configstrings[CS_PLAYERSKINS_OLD + i] || '';
-        if (cs) count++;
-    }
-    return count;
+function updatePlayerCount() {
+    // Strict §2 stream roster length (dummy already filtered server-side).
+    // Do not count sticky-only / configstring-only rows.
+    elEntities.textContent = `${players.length} player(s)`;
 }
 
-function updatePlayerCount() {
-    elEntities.textContent = `${countActiveSkins()} player(s)`;
+function cacheLoadoutFromPlayer(p) {
+    loadoutCache[p.number] = {
+        health: p.health,
+        weapon: p.weapon,
+        ammo: p.ammo,
+        clips: p.clips,
+        grenades: p.grenades,
+        alive: !!p.alive,
+        scoped: !!p.scoped,
+    };
+}
+
+function formatAmmo(lo) {
+    if (!lo || !lo.alive) return '-';
+    if (typeof lo.ammo !== 'number') return '-';
+    const spare = typeof lo.clips === 'number' ? lo.clips : 0;
+    return `${lo.ammo}/${spare}`;
 }
 
 function extractMapname() {
@@ -817,14 +831,6 @@ function escapeHtml(s) {
     }[c]));
 }
 
-function pingForPlayer(name) {
-    if (!serverStatus || !serverStatus.players) return null;
-    for (const sp of serverStatus.players) {
-        if (sp.name === name) return sp.ping;
-    }
-    return null;
-}
-
 function renderTeamScores() {
     const t = scoreboardState.teamScores || { team1: 0, team2: 0, team3: 0 };
     const has3 = t.team3 !== 0;
@@ -840,6 +846,12 @@ function renderTeamScores() {
 
 function renderScoreboard() {
     renderTeamScores();
+
+    const liveByNum = {};
+    for (const p of players) {
+        liveByNum[p.number] = p;
+        cacheLoadoutFromPlayer(p);
+    }
 
     const rows = [];
     const seen = new Set();
@@ -869,14 +881,39 @@ function renderScoreboard() {
     const colourByTeam = distinctTeams.size >= 2 && distinctTeams.size < Object.keys(teamMap).length;
 
     elScoreboardBody.innerHTML = rows.map((r) => {
-        const ping = pingForPlayer(r.name);
-        const pingStr = ping == null ? '-' : String(ping);
         const teamIdx = teamMap[r.number];
         const teamCls = colourByTeam && teamIdx !== undefined && teamIdx < TEAM_COLOURS.length
             ? ` team-${teamIdx}` : '';
         const nameHtml = `<span class="player-name${teamCls}">${escapeHtml(r.name)}</span>`;
         const lockedCls = r.number === lockedPlayerNum ? ' locked' : '';
-        return `<tr data-num="${r.number}"${lockedCls ? ` class="locked"` : ''}><td>${r.number}</td><td>${nameHtml}</td><td class="num">${r.frags}</td><td class="num">${pingStr}</td></tr>`;
+
+        const live = liveByNum[r.number];
+        const sticky = loadoutCache[r.number];
+        let rowCls = lockedCls ? 'locked' : '';
+        let hp = '-';
+        let wpn = '-';
+        let ammo = '-';
+
+        if (live) {
+            if (live.alive) {
+                rowCls = (rowCls ? rowCls + ' ' : '') + 'in-stream';
+                hp = typeof live.health === 'number' ? String(live.health) : '-';
+                wpn = live.weapon ? escapeHtml(live.weapon) : '-';
+                ammo = formatAmmo(live);
+            } else {
+                rowCls = (rowCls ? rowCls + ' ' : '') + 'dead';
+            }
+        } else if (sticky) {
+            rowCls = (rowCls ? rowCls + ' ' : '') + 'away';
+            if (sticky.alive) {
+                hp = typeof sticky.health === 'number' ? String(sticky.health) : '-';
+                wpn = sticky.weapon ? escapeHtml(sticky.weapon) : '-';
+                ammo = formatAmmo(sticky);
+            }
+        }
+
+        const clsAttr = rowCls ? ` class="${rowCls}"` : '';
+        return `<tr data-num="${r.number}"${clsAttr}><td>${r.number}</td><td>${nameHtml}</td><td class="num">${hp}</td><td class="wpn">${wpn}</td><td class="num">${ammo}</td><td class="num">${r.frags}</td></tr>`;
     }).join('');
 }
 
@@ -978,6 +1015,8 @@ function connectSSE() {
         const data = JSON.parse(e.data);
         configstrings = data.configstrings || {};
         players = data.players || [];
+        loadoutCache = {};
+        for (const p of players) cacheLoadoutFromPlayer(p);
         if (data.status) {
             serverStatus = data.status;
             if (serverStatus.serverinfo && serverStatus.serverinfo.maxclients) {
@@ -1006,6 +1045,9 @@ function connectSSE() {
         elKillfeed.innerHTML = '';
         elChat.innerHTML = '';
         scoreboardState = { teamScores: { team1: 0, team2: 0, team3: 0 }, layoutsFlags: 0, layoutText: '', players: {} };
+        loadoutCache = {};
+        players = [];
+        updatePlayerCount();
         // Map change: reset elapsed gametime; the next frame event will start it.
         updateGametime(0);
         renderScoreboard();
@@ -1023,7 +1065,9 @@ function connectSSE() {
             const cap = Math.max(maxclientsCache, 256);
             for (const base of [CS_PLAYERSKINS_OLD, CS_PLAYERSKINS_EXT]) {
                 if (index >= base && index < base + cap) {
-                    delete scoreboardState.players[index - base];
+                    const num = index - base;
+                    delete scoreboardState.players[num];
+                    delete loadoutCache[num];
                     break;
                 }
             }

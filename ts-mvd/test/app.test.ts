@@ -19,8 +19,34 @@ jest.mock('net', () => ({
     },
 }));
 
-import { httpServer, resetAppStateForTests, DEMOS_DIR, parser, getScoreboardForTests } from '../src/app';
+import { httpServer, resetAppStateForTests, DEMOS_DIR, parser, getScoreboardForTests, getPlayersForTests } from '../src/app';
 import { PlayerState } from '../src/frame';
+import { Stat } from '../src/protocol';
+
+function mkPlayer(number: number, frags: number, extras: Partial<PlayerState> = {}): PlayerState {
+    const stats = new Int16Array(32);
+    stats[Stat.Frags] = frags;
+    stats[Stat.Health] = 100;
+    if (extras.stats) {
+        stats.set(extras.stats.subarray(0, Math.min(extras.stats.length, stats.length)));
+    }
+    const { stats: _s, frags: _f, number: _n, ...rest } = extras;
+    return {
+        number,
+        inUse: true,
+        pmType: 0,
+        origin: [0, 0, 0],
+        viewangles: [0, 0, 0],
+        viewoffset: [0, 0, 0],
+        fov: 90,
+        gunindex: 0,
+        rdflags: 0,
+        frags: _f ?? frags,
+        stats: _s ?? stats,
+        isMvdDummy: false,
+        ...rest,
+    };
+}
 
 describe('HTTP control surface', () => {
     beforeEach(() => {
@@ -120,21 +146,6 @@ describe('HTTP control surface', () => {
         // brief PPS_REMOVE / inUse=false window after a death; the scoreboard
         // must keep #1's last-known frag count (regression for the "scores
         // reset to 0 on death" bug).
-        const mkPlayer = (number: number, frags: number): PlayerState => ({
-            number,
-            inUse: true,
-            pmType: 0,
-            origin: [0, 0, 0],
-            viewangles: [0, 0, 0],
-            viewoffset: [0, 0, 0],
-            fov: 90,
-            gunindex: 0,
-            rdflags: 0,
-            frags,
-            stats: new Int16Array(32),
-            isMvdDummy: false,
-        });
-
         parser.onFrame!({
             frameNumber: 1,
             players: [mkPlayer(0, 3), mkPlayer(1, 5)],
@@ -153,22 +164,25 @@ describe('HTTP control surface', () => {
         expect(sb.players[1]).toEqual({ number: 1, frags: 5 });
     });
 
-    test('scoreboard drops a player when their playerskin configstring is cleared', () => {
-        const mkPlayer = (number: number, frags: number): PlayerState => ({
-            number,
-            inUse: true,
-            pmType: 0,
-            origin: [0, 0, 0],
-            viewangles: [0, 0, 0],
-            viewoffset: [0, 0, 0],
-            fov: 90,
-            gunindex: 0,
-            rdflags: 0,
-            frags,
-            stats: new Int16Array(32),
-            isMvdDummy: false,
+    test('empty frame clears the internal players map (§2 roster)', () => {
+        parser.onFrame!({
+            frameNumber: 1,
+            players: [mkPlayer(0, 3)],
+            teamScores: { team1: 0, team2: 0, team3: 0 },
+            layoutsFlags: 0,
         });
+        expect(getPlayersForTests().size).toBe(1);
 
+        parser.onFrame!({
+            frameNumber: 2,
+            players: [],
+            teamScores: { team1: 0, team2: 0, team3: 0 },
+            layoutsFlags: 0,
+        });
+        expect(getPlayersForTests().size).toBe(0);
+    });
+
+    test('scoreboard drops a player when their playerskin configstring is cleared', () => {
         parser.onFrame!({
             frameNumber: 1,
             players: [mkPlayer(2, 7)],
@@ -183,24 +197,9 @@ describe('HTTP control surface', () => {
     });
 
     test('scoreboard skips MVD dummy slot (isMvdDummy=true)', () => {
-        const mkPlayer = (number: number, frags: number, isMvdDummy = false): PlayerState => ({
-            number,
-            inUse: true,
-            pmType: 0,
-            origin: [0, 0, 0],
-            viewangles: [0, 0, 0],
-            viewoffset: [0, 0, 0],
-            fov: 90,
-            gunindex: 0,
-            rdflags: 0,
-            frags,
-            stats: new Int16Array(32),
-            isMvdDummy,
-        });
-
         parser.onFrame!({
             frameNumber: 1,
-            players: [mkPlayer(0, 3), mkPlayer(7, 0, true), mkPlayer(1, 5)],
+            players: [mkPlayer(0, 3), mkPlayer(7, 0, { isMvdDummy: true }), mkPlayer(1, 5)],
             teamScores: { team1: 0, team2: 0, team3: 0 },
             layoutsFlags: 0,
         });
@@ -209,6 +208,7 @@ describe('HTTP control surface', () => {
         expect(sb.players[0]).toEqual({ number: 0, frags: 3 });
         expect(sb.players[1]).toEqual({ number: 1, frags: 5 });
         expect(sb.players[7]).toBeUndefined();
+        expect(getPlayersForTests().has(7)).toBe(false);
     });
 
     test('GET /maps/{unknown} returns 404', async () => {

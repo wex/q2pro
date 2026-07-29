@@ -23,6 +23,12 @@ import { BspFile } from './bsp';
 import { generateMapSvg } from './map-render';
 import { CombatFxResolver } from './combat-fx';
 import { PakIndex } from './pak';
+import {
+    extractAmmo,
+    isAlive,
+    isScoped,
+    resolveWeaponLabel,
+} from './player-loadout';
 
 const defaultHost = process.argv[2] || '127.0.0.1';
 const defaultPort = parseInt(process.argv[3] || '27910', 10);
@@ -78,6 +84,55 @@ const scoreboard = {
     players: {} as Record<number, { number: number; frags: number }>,
 };
 
+/** SSE / snapshot player payload (shared by frame + /events snapshot). */
+export interface SsePlayerPayload {
+    number: number;
+    origin: [number, number, number];
+    viewangles: [number, number, number];
+    fov: number;
+    gunindex: number;
+    frags: number;
+    health: number | undefined;
+    alive: boolean;
+    weapon: string | undefined;
+    ammo: number | undefined;
+    clips: number | undefined;
+    grenades: number | undefined;
+    scoped: boolean;
+    pmType: number;
+    weaponTypeNum: number | undefined;
+}
+
+function serializePlayerForSse(p: PlayerState): SsePlayerPayload {
+    const health = p.stats.length > Stat.Health ? p.stats[Stat.Health] : undefined;
+    const healthVal = health ?? 0;
+    const alive = isAlive(p.pmType, healthVal);
+    const ammoStatus = extractAmmo(p.stats, alive);
+    const sniperIcon = p.stats.length > Stat.SniperIcon ? p.stats[Stat.SniperIcon] : 0;
+    const weapon = resolveWeaponLabel(
+        { weaponTypeNum: p.weaponTypeNum, gunindex: p.gunindex },
+        configstrings,
+    );
+    const pos = MvdFrameParser.originToWorld(p.origin);
+    return {
+        number: p.number,
+        origin: pos,
+        viewangles: [...p.viewangles] as [number, number, number],
+        fov: p.fov,
+        gunindex: p.gunindex,
+        frags: p.frags,
+        health,
+        alive,
+        weapon,
+        ammo: ammoStatus?.ammo,
+        clips: ammoStatus?.clips,
+        grenades: ammoStatus?.grenades,
+        scoped: isScoped(p.fov, sniperIcon | 0),
+        pmType: p.pmType,
+        weaponTypeNum: p.weaponTypeNum,
+    };
+}
+
 parser.onServerData = (ev) => {
     configstrings.clear();
     players.clear();
@@ -101,23 +156,12 @@ parser.onConfigString = (ev) => {
 };
 
 parser.onFrame = (ev) => {
-    if (ev.players.length === 0) return;
-
-    const lines = ev.players.map((p) => {
-        const pos = MvdFrameParser.originToWorld(p.origin);
-        const x = pos[0].toFixed(1);
-        const y = pos[1].toFixed(1);
-        const z = pos[2].toFixed(1);
-        const pitch = p.viewangles[0].toFixed(1);
-        const yaw = p.viewangles[1].toFixed(1);
-        return `  #${p.number} pos=(${x}, ${y}, ${z}) angles=(${pitch}, ${yaw})`;
-    });
-
     // Update players map. The MVD observer dummy (the slot at
     // serverData.clientNum) is filtered out here so it is never rendered,
     // tracked by combat FX, or shown in the scoreboard. See
     // `src/server/mvd/game.c` in Q2Pro for the analogous `player == mvd->dummy`
-    // filters.
+    // filters. Always clear/rebuild — including empty frames — so combat-fx
+    // and snapshot state match the stream roster (§2).
     players.clear();
     for (const p of ev.players) {
         if (p.isMvdDummy) continue;
@@ -217,18 +261,7 @@ parser.onFrame = (ev) => {
         frameNumber: ev.frameNumber,
         players: ev.players
             .filter((p) => !p.isMvdDummy)
-            .map((p) => {
-                const pos = MvdFrameParser.originToWorld(p.origin);
-                return {
-                    number: p.number,
-                    origin: pos,
-                    viewangles: p.viewangles,
-                    fov: p.fov,
-                    gunindex: p.gunindex,
-                    frags: p.frags,
-                    health: p.stats.length > Stat.Health ? p.stats[Stat.Health] : undefined,
-                };
-            }),
+            .map((p) => serializePlayerForSse(p)),
         teamScores: ev.teamScores,
         layoutsFlags: ev.layoutsFlags,
     });
@@ -771,10 +804,7 @@ const httpServer = http.createServer((req, res) => {
         // Send current state snapshot
         const cs: Record<number, string> = {};
         for (const [k, v] of configstrings) cs[k] = v;
-        const ps = Array.from(players.values()).map((p) => {
-            const pos = MvdFrameParser.originToWorld(p.origin);
-            return { number: p.number, origin: pos, viewangles: p.viewangles, fov: p.fov, gunindex: p.gunindex };
-        });
+        const ps = Array.from(players.values()).map((p) => serializePlayerForSse(p));
         res.write(`event: snapshot\ndata: ${JSON.stringify({
             configstrings: cs,
             players: ps,
@@ -832,6 +862,11 @@ export {
 /** Snapshot of the in-memory scoreboard, for tests. */
 export function getScoreboardForTests(): typeof scoreboard {
     return scoreboard;
+}
+
+/** Current stream-roster players map (dummy-filtered), for tests. */
+export function getPlayersForTests(): Map<number, PlayerState> {
+    return players;
 }
 
 /**

@@ -99,6 +99,14 @@ const SND_ATTENUATION = 1 << 1;
 const SND_OFFSET = 1 << 4;
 const SND_INDEX16 = 1 << 5;
 
+/** Upper bound for client edict numbers (edict i = client i-1). */
+const MAX_CLIENT_EDICTS = 256;
+
+interface PlayerEntityWeapon {
+    skinnum: number;
+    modelindex2: number;
+}
+
 // ── Public types ────────────────────────────────────────────────────
 
 export interface PlayerState {
@@ -122,6 +130,13 @@ export interface PlayerState {
      * no dummy exists and this stays `false` for every slot.
      */
     isMvdDummy: boolean;
+    /**
+     * AQ2 VWEP weapon typeNum from player entity skinnum>>8 when
+     * modelindex2===255. Undefined when no vwep encoding is present
+     * (dead body, sv_mvd_nogun, non-AQ2). Prefer this over gunindex for
+     * weapon detection; see doc/fable-search.md §4.2.
+     */
+    weaponTypeNum?: number;
 }
 
 export interface TeamScores {
@@ -262,6 +277,13 @@ export class MvdFrameParser {
     // `-1` means no dummy (SinglePov streams).
     private mvdDummyNum = -1;
 
+    /**
+     * Cumulative player-edict entity state for VWEP weapon encoding.
+     * Keyed by edict number (1..MAX_CLIENT_EDICTS). Updated from
+     * packetentities deltas; cleared on U_REMOVE / serverdata / reset.
+     */
+    private playerEntityWeapon: Map<number, PlayerEntityWeapon> = new Map();
+
     // Print dedup state: the Q2Pro MVD stream records one mvd_unicast_r per
     // recipient for every PF_cprintf(ent, PRINT_CHAT|PRINT_MEDIUM, ...) call,
     // so a single chat line or obituary arrives as N identical svc_print
@@ -338,6 +360,7 @@ export class MvdFrameParser {
     /** Reset all accumulated state (e.g. on reconnect) */
     reset(): void {
         this.playerStates.clear();
+        this.playerEntityWeapon.clear();
         this.frameNumber = 0;
         this.mvdVersion = 0;
         this.mvdFlags = 0;
@@ -376,6 +399,7 @@ export class MvdFrameParser {
 
     private parseServerData(reader: BufferReader, extrabits: number): void {
         this.playerStates.clear();
+        this.playerEntityWeapon.clear();
         this.frameNumber = 0;
         this.mvdDummyNum = -1;
         this.printSeenThisTick.clear();
@@ -459,8 +483,8 @@ export class MvdFrameParser {
         // Parse player states
         this.parsePacketPlayers(reader);
 
-        // Skip entity states
-        this.skipPacketEntities(reader);
+        // Player-edict entity deltas (VWEP skinnum / modelindex2)
+        this.parsePacketEntities(reader);
 
         // Fire callback with current active players
         const activePlayers: PlayerState[] = [];
@@ -470,6 +494,7 @@ export class MvdFrameParser {
                 // arrived after the first time this slot was seen, and the
                 // dummy number can change across map rotations.
                 ps.isMvdDummy = ps.number === this.mvdDummyNum;
+                this.applyWeaponTypeNum(ps);
                 activePlayers.push({
                     ...ps,
                     origin: [...ps.origin],
@@ -623,9 +648,18 @@ export class MvdFrameParser {
         return (value ^ mask) - mask;
     }
 
-    // ── Entity skipping ─────────────────────────────────────────────
+    // ── Entity parsing (player edicts for VWEP; skip others) ────────
 
-    private skipPacketEntities(reader: BufferReader): void {
+    private applyWeaponTypeNum(ps: PlayerState): void {
+        const ent = this.playerEntityWeapon.get(ps.number + 1);
+        if (ent && ent.modelindex2 === 255) {
+            ps.weaponTypeNum = (ent.skinnum >> 8) & 0xff;
+        } else {
+            delete ps.weaponTypeNum;
+        }
+    }
+
+    private parsePacketEntities(reader: BufferReader): void {
         while (reader.remaining > 0) {
             // Read entity bits using the same scheme as MSG_ParseEntityBits
             let bits = reader.readUInt8();
@@ -652,26 +686,49 @@ export class MvdFrameParser {
             if (number === 0) break;
 
             // If this entity is being removed, no delta fields follow
-            if (bits & U_REMOVE) continue;
+            if (bits & U_REMOVE) {
+                this.playerEntityWeapon.delete(number);
+                continue;
+            }
 
-            // Skip all delta fields
-            this.skipEntityDelta(reader, bits);
+            const captured = this.readEntityDelta(reader, bits);
+            if (number >= 1 && number <= MAX_CLIENT_EDICTS) {
+                const prev = this.playerEntityWeapon.get(number) ?? {
+                    skinnum: 0,
+                    modelindex2: 0,
+                };
+                if (captured.modelindex2 !== undefined) {
+                    prev.modelindex2 = captured.modelindex2;
+                }
+                if (captured.skinnum !== undefined) {
+                    prev.skinnum = captured.skinnum;
+                }
+                this.playerEntityWeapon.set(number, prev);
+            }
         }
     }
 
-    private skipEntityDelta(reader: BufferReader, bits: number): void {
+    /**
+     * Consume entity delta fields (same wire order as MSG_ParseDeltaEntity).
+     * Returns modelindex2 / skinnum when those bits were present so player
+     * edicts can accumulate VWEP state without a second pass.
+     */
+    private readEntityDelta(
+        reader: BufferReader,
+        bits: number,
+    ): { modelindex2?: number; skinnum?: number } {
         const hasExt = !!(this.esFlags & MSG_ES_EXTENSIONS);
         const hasExt2 = !!(this.esFlags & MSG_ES_EXTENSIONS_2);
         const hasLongSolid = !!(this.esFlags & MSG_ES_LONGSOLID);
         const hasShortAngles = !!(this.esFlags & MSG_ES_SHORTANGLES);
-
-        // Models — must be read before frame in the C code,
-        // but the actual wire order follows MSG_ParseDeltaEntity exactly.
+        const out: { modelindex2?: number; skinnum?: number } = {};
 
         // Models (with U_MODEL16, models use uint16; otherwise uint8)
         const model16 = hasExt && (bits & U_MODEL16);
         if (bits & U_MODEL) { model16 ? reader.readUInt16LE() : reader.readUInt8(); }
-        if (bits & U_MODEL2) { model16 ? reader.readUInt16LE() : reader.readUInt8(); }
+        if (bits & U_MODEL2) {
+            out.modelindex2 = model16 ? reader.readUInt16LE() : reader.readUInt8();
+        }
         if (bits & U_MODEL3) { model16 ? reader.readUInt16LE() : reader.readUInt8(); }
         if (bits & U_MODEL4) { model16 ? reader.readUInt16LE() : reader.readUInt8(); }
 
@@ -680,9 +737,9 @@ export class MvdFrameParser {
         if (bits & U_FRAME16) reader.readUInt16LE();
 
         // Skin
-        if ((bits & U_SKIN32) === U_SKIN32) reader.readInt32LE();
-        else if (bits & U_SKIN8) reader.readUInt8();
-        else if (bits & U_SKIN16) reader.readUInt16LE();
+        if ((bits & U_SKIN32) === U_SKIN32) out.skinnum = reader.readInt32LE();
+        else if (bits & U_SKIN8) out.skinnum = reader.readUInt8();
+        else if (bits & U_SKIN16) out.skinnum = reader.readUInt16LE();
 
         // Effects
         if ((bits & U_EFFECTS32) === U_EFFECTS32) reader.readInt32LE();
@@ -765,6 +822,8 @@ export class MvdFrameParser {
             const hasScale = (bits >= 0x100000000) ? !!(bits / 0x100000000 & 1) : false;
             if (hasScale) reader.readUInt8();
         }
+
+        return out;
     }
 
     private skipDeltaCoord(reader: BufferReader): void {
