@@ -310,16 +310,32 @@ function updateFollowUi() {
     elPanel.classList.toggle('follow-mode', lockedPlayerNum !== null);
 }
 
+/** Keep the map rectangle inside the CSS viewport (no off-map void). */
+function clampTransformToViewport(t) {
+    if (!mapBounds) return t;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const { svgW, svgH } = mapBounds;
+    const mapW = svgW * t.scale;
+    const mapH = svgH * t.scale;
+    let { tx, ty } = t;
+    if (mapW >= vw) tx = Math.min(0, Math.max(vw - mapW, tx));
+    else tx = Math.min(vw - mapW, Math.max(0, tx));
+    if (mapH >= vh) ty = Math.min(0, Math.max(vh - mapH, ty));
+    else ty = Math.min(vh - mapH, Math.max(0, ty));
+    return { ...t, tx, ty };
+}
+
 function applyLockCamera() {
     if (lockedPlayerNum === null || !mapBounds) return;
     const ent = players.find(p => p.number === lockedPlayerNum);
     if (!ent) return;
     const [sx, sy] = worldToSvg(ent.origin[0], ent.origin[1]);
-    transform = {
+    transform = clampTransformToViewport({
         ...transform,
         tx: window.innerWidth / 2 - sx * transform.scale,
         ty: window.innerHeight / 2 - sy * transform.scale,
-    };
+    });
 }
 
 // ─── Canvas sizing ───────────────────────────────────────────────────────────

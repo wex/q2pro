@@ -15,6 +15,8 @@ Click a player icon on the map to lock the camera to that player; the view re-ce
 
 When the locked player disconnects or is absent from a frame, the camera holds its last position — no crash, no auto-unlock.  The lock resumes tracking if the player reappears (e.g. after a brief `PPS_REMOVE` window around respawn).
 
+While following, pan is **clamped to the viewport** so the map never scrolls off-window; near map edges the player sits off-centre rather than exposing empty void.
+
 ### Follow-mode panel
 
 While `lockedPlayerNum` is set, the side panel enters **follow mode** (`#panel.follow-mode`):
@@ -40,7 +42,8 @@ let dragStart = null;          // { x, y } CSS px, set on mousedown for travel d
 
 - **`cssToSvg(cx, cy)`** — converts CSS pixel coordinates to SVG space using the current transform.
 - **`hitTestPlayer(cx, cy)`** — iterates `players`, returns the first entity whose SVG-space circle (radius 16) contains the point.
-- **`applyLockCamera()`** — if `lockedPlayerNum` is set, re-centres `transform.tx`/`ty` on the locked player's current SVG position.
+- **`applyLockCamera()`** — if `lockedPlayerNum` is set, re-centres `transform.tx`/`ty` on the locked player's current SVG position, then `clampTransformToViewport`.
+- **`clampTransformToViewport(t)`** — clamps pan so the scaled map stays inside the browser window.
 - **`setLock(num)`** — updates lock, follow-mode class, and re-renders the scoreboard.
 - **`isFollowTargetAlive()`** — live or sticky `alive` for the locked slot.
 - **`updateFollowUi()`** — toggles `#panel.follow-mode` while locked.
