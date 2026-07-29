@@ -229,11 +229,19 @@ body {
 
 #scoreboard td.wpn,
 #scoreboard td.item {
-    font-size: 11px;
-    max-width: 4.5em;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    width: 28px;
+    padding: 2px;
+    text-align: center;
+    vertical-align: middle;
+    line-height: 0;
+}
+
+#scoreboard img.sb-icon {
+    width: 20px;
+    height: 20px;
+    image-rendering: auto;
+    vertical-align: middle;
+    pointer-events: none;
 }
 
 #scoreboard tbody tr.dead td,
@@ -241,8 +249,6 @@ body {
     opacity: 0.55;
 }
 
-#scoreboard tbody tr.dead td.wpn,
-#scoreboard tbody tr.dead td.item,
 #scoreboard tbody tr.dead td.num {
     color: #888;
 }

@@ -74,7 +74,11 @@ From `stats[]` when alive (`pmType === PM_NORMAL` and `STAT_HEALTH > 0`):
 - `STAT_CLIP` — spare magazines
 - `STAT_GRENADES` — raw HUD value (may alternate with medkit)
 
-Dead / away-in-frame rows show `-` for HP/Wpn/Item/Ammo.
+Dead / away-in-frame rows show `-` for HP/Ammo; Wpn/Item cells are empty
+when there is no special / no mapped icon (Grapple has no icon by design).
+
+Scoreboard Wpn/Item columns render PNG icons from `public/assets/` via a
+label→filename map in `public/app.js` (`WEAPON_ICON` / `ITEM_ICON`).
 
 ## Files
 

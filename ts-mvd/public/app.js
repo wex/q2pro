@@ -64,6 +64,34 @@ const TEAM_COLOURS = [
 ];
 const DEFAULT_COLOUR = { fill: 'rgba(140, 140, 140, 0.85)', stroke: 'rgba(200, 200, 200, 0.9)', cone: 'rgba(140, 140, 140, 0.3)', coneStroke: 'rgba(140, 140, 140, 0.6)' };
 
+// Scoreboard loadout icons under /assets/. Grapple has no icon by design.
+const WEAPON_ICON = {
+    MK23: 'w_mk23.png',
+    MP5: 'w_mp5.png',
+    M4: 'w_m4.png',
+    M3: 'w_super90.png',
+    HC: 'w_cannon.png',
+    SSG: 'w_sniper.png',
+    Dual: 'w_akimbo.png',
+    Knife: 'w_knife.png',
+    G: 'a_m61frag.png',
+};
+const ITEM_ICON = {
+    Sil: 'p_silencer.png',
+    Slip: 'slippers.png',
+    Band: 'p_bandolier.png',
+    Kev: 'i_jacketarmor.png',
+    Helm: 'p_rebreather.png',
+    Laser: 'p_laser.png',
+};
+
+function loadoutIconHtml(label, map) {
+    if (!label) return '';
+    const file = map[label];
+    if (!file) return '';
+    return `<img class="sb-icon" src="/assets/${file}" alt="${escapeHtml(label)}" title="${escapeHtml(label)}">`;
+}
+
 // ─── Combat FX ───────────────────────────────────────────────────────────────
 //
 // Three in-place effects replace the old shot-line traces:
@@ -892,16 +920,16 @@ function renderScoreboard() {
         const sticky = loadoutCache[r.number];
         let rowCls = lockedCls ? 'locked' : '';
         let hp = '-';
-        let wpn = '-';
-        let item = '-';
+        let wpn = '';
+        let item = '';
         let ammo = '-';
 
         if (live) {
             if (live.alive) {
                 rowCls = (rowCls ? rowCls + ' ' : '') + 'in-stream';
                 hp = typeof live.health === 'number' ? String(live.health) : '-';
-                wpn = live.weapon ? escapeHtml(live.weapon) : '-';
-                item = live.item ? escapeHtml(live.item) : '-';
+                wpn = loadoutIconHtml(live.weapon, WEAPON_ICON);
+                item = loadoutIconHtml(live.item, ITEM_ICON);
                 ammo = formatAmmo(live);
             } else {
                 rowCls = (rowCls ? rowCls + ' ' : '') + 'dead';
@@ -910,8 +938,8 @@ function renderScoreboard() {
             rowCls = (rowCls ? rowCls + ' ' : '') + 'away';
             if (sticky.alive) {
                 hp = typeof sticky.health === 'number' ? String(sticky.health) : '-';
-                wpn = sticky.weapon ? escapeHtml(sticky.weapon) : '-';
-                item = sticky.item ? escapeHtml(sticky.item) : '-';
+                wpn = loadoutIconHtml(sticky.weapon, WEAPON_ICON);
+                item = loadoutIconHtml(sticky.item, ITEM_ICON);
                 ammo = formatAmmo(sticky);
             }
         }
