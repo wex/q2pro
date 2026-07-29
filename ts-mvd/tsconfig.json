@@ -12,7 +12,7 @@
     "declaration": true,
     "sourceMap": true,
     "resolveJsonModule": true,
-    "ignoreDeprecations": "6.0",
+    "ignoreDeprecations": "5.0",
     "moduleResolution": "node"
   },
   "include": [

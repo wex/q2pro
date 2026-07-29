@@ -645,6 +645,7 @@ function cacheLoadoutFromPlayer(p) {
     loadoutCache[p.number] = {
         health: p.health,
         weapon: p.weapon,
+        item: p.item,
         ammo: p.ammo,
         clips: p.clips,
         grenades: p.grenades,
@@ -892,6 +893,7 @@ function renderScoreboard() {
         let rowCls = lockedCls ? 'locked' : '';
         let hp = '-';
         let wpn = '-';
+        let item = '-';
         let ammo = '-';
 
         if (live) {
@@ -899,6 +901,7 @@ function renderScoreboard() {
                 rowCls = (rowCls ? rowCls + ' ' : '') + 'in-stream';
                 hp = typeof live.health === 'number' ? String(live.health) : '-';
                 wpn = live.weapon ? escapeHtml(live.weapon) : '-';
+                item = live.item ? escapeHtml(live.item) : '-';
                 ammo = formatAmmo(live);
             } else {
                 rowCls = (rowCls ? rowCls + ' ' : '') + 'dead';
@@ -908,12 +911,13 @@ function renderScoreboard() {
             if (sticky.alive) {
                 hp = typeof sticky.health === 'number' ? String(sticky.health) : '-';
                 wpn = sticky.weapon ? escapeHtml(sticky.weapon) : '-';
+                item = sticky.item ? escapeHtml(sticky.item) : '-';
                 ammo = formatAmmo(sticky);
             }
         }
 
         const clsAttr = rowCls ? ` class="${rowCls}"` : '';
-        return `<tr data-num="${r.number}"${clsAttr}><td>${r.number}</td><td>${nameHtml}</td><td class="num">${hp}</td><td class="wpn">${wpn}</td><td class="num">${ammo}</td><td class="num">${r.frags}</td></tr>`;
+        return `<tr data-num="${r.number}"${clsAttr}><td>${r.number}</td><td>${nameHtml}</td><td class="num">${hp}</td><td class="wpn">${wpn}</td><td class="item">${item}</td><td class="num">${ammo}</td><td class="num">${r.frags}</td></tr>`;
     }).join('');
 }
 

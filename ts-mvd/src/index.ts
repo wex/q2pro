@@ -59,11 +59,18 @@ export { PakIndex, PakEntry, PakMethod } from './pak';
 export {
     resolveWeaponLabel,
     resolveWeaponTypeNum,
+    resolveSelectedItem,
     extractAmmo,
     isAlive,
     isScoped,
     weaponLabel,
     AQ2_WEAPON_LABELS,
+    AQ2_ITEM_LABELS,
+    AQ2_ITEM_ICON_LABELS,
     CS_MODELS_OLD,
     CS_MODELS_EXT,
+    CS_ITEMS_OLD,
+    CS_ITEMS_EXT,
+    CS_IMAGES_OLD,
+    CS_IMAGES_EXT,
 } from './player-loadout';

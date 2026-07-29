@@ -27,6 +27,7 @@ import {
     extractAmmo,
     isAlive,
     isScoped,
+    resolveSelectedItem,
     resolveWeaponLabel,
 } from './player-loadout';
 
@@ -95,6 +96,7 @@ export interface SsePlayerPayload {
     health: number | undefined;
     alive: boolean;
     weapon: string | undefined;
+    item: string | undefined;
     ammo: number | undefined;
     clips: number | undefined;
     grenades: number | undefined;
@@ -113,6 +115,7 @@ function serializePlayerForSse(p: PlayerState): SsePlayerPayload {
         { weaponTypeNum: p.weaponTypeNum, gunindex: p.gunindex },
         configstrings,
     );
+    const item = resolveSelectedItem(p.stats, alive, configstrings);
     const pos = MvdFrameParser.originToWorld(p.origin);
     return {
         number: p.number,
@@ -124,6 +127,7 @@ function serializePlayerForSse(p: PlayerState): SsePlayerPayload {
         health,
         alive,
         weapon,
+        item,
         ammo: ammoStatus?.ammo,
         clips: ammoStatus?.clips,
         grenades: ammoStatus?.grenades,

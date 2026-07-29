@@ -227,7 +227,8 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
-#scoreboard td.wpn {
+#scoreboard td.wpn,
+#scoreboard td.item {
     font-size: 11px;
     max-width: 4.5em;
     overflow: hidden;
@@ -241,6 +242,7 @@ body {
 }
 
 #scoreboard tbody tr.dead td.wpn,
+#scoreboard tbody tr.dead td.item,
 #scoreboard tbody tr.dead td.num {
     color: #888;
 }

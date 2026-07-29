@@ -1,10 +1,14 @@
 import {
     AQ2_WEAPON_LABELS,
+    CS_IMAGES_OLD,
+    CS_ITEMS_EXT,
+    CS_ITEMS_OLD,
     CS_MODELS_EXT,
     CS_MODELS_OLD,
     extractAmmo,
     isAlive,
     isScoped,
+    resolveSelectedItem,
     resolveWeaponLabel,
     resolveWeaponTypeNum,
     weaponLabel,
@@ -64,5 +68,41 @@ describe('player-loadout', () => {
         expect(Object.keys(AQ2_WEAPON_LABELS).map(Number).sort((a, b) => a - b)).toEqual([
             1, 2, 3, 4, 5, 6, 7, 8, 9, 23,
         ]);
+    });
+
+    test('resolveSelectedItem uses STAT_ITEMS_ICON via CS_IMAGES', () => {
+        const cs = new Map<number, string>();
+        cs.set(CS_IMAGES_OLD + 42, 'p_silencer');
+        const stats = new Int16Array(32);
+        stats[Stat.ItemsIcon] = 42;
+        stats[Stat.SelectedItem] = 3; // weapon index — must not win
+        cs.set(CS_ITEMS_OLD + 3, 'MK23 Pistol');
+        expect(resolveSelectedItem(stats, true, cs)).toBe('Sil');
+    });
+
+    test('resolveSelectedItem falls back to special CS_ITEMS names only', () => {
+        const cs = new Map<number, string>();
+        cs.set(CS_ITEMS_OLD + 14, 'Lasersight');
+        const stats = new Int16Array(32);
+        stats[Stat.SelectedItem] = 14;
+        expect(resolveSelectedItem(stats, true, cs)).toBe('Laser');
+    });
+
+    test('resolveSelectedItem ignores weapon pickup names', () => {
+        const cs = new Map<number, string>();
+        cs.set(CS_ITEMS_OLD + 3, 'MK23 Pistol');
+        const stats = new Int16Array(32);
+        stats[Stat.SelectedItem] = 3;
+        expect(resolveSelectedItem(stats, true, cs)).toBeUndefined();
+    });
+
+    test('resolveSelectedItem returns undefined when dead or unset', () => {
+        const cs = new Map<number, string>();
+        cs.set(CS_IMAGES_OLD + 5, 'i_jacketarmor');
+        const stats = new Int16Array(32);
+        stats[Stat.ItemsIcon] = 5;
+        expect(resolveSelectedItem(stats, false, cs)).toBeUndefined();
+        stats[Stat.ItemsIcon] = 0;
+        expect(resolveSelectedItem(stats, true, cs)).toBeUndefined();
     });
 });
