@@ -227,21 +227,55 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
-#scoreboard td.wpn,
-#scoreboard td.item {
-    width: 28px;
-    padding: 2px;
-    text-align: center;
+#scoreboard td.name-cell {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    padding: 2px 4px 2px 2px;
     vertical-align: middle;
+}
+
+#scoreboard .loadout-icons {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    flex-shrink: 0;
     line-height: 0;
 }
 
-#scoreboard img.sb-icon {
+#scoreboard img.sb-icon,
+#scoreboard .sb-icon-slot {
     width: 20px;
     height: 20px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+}
+
+#scoreboard img.sb-icon {
+    display: block;
     image-rendering: auto;
-    vertical-align: middle;
     pointer-events: none;
+}
+
+#scoreboard .sb-icon-empty {
+    display: block;
+}
+
+#scoreboard .sb-icon-label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: auto;
+    min-width: 20px;
+    max-width: 48px;
+    padding: 0 1px;
+    color: #e44;
+    font-size: 8px;
+    font-weight: bold;
+    line-height: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 #scoreboard tbody tr.dead td,

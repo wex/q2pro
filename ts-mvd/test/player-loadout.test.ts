@@ -42,6 +42,30 @@ describe('player-loadout', () => {
         expect(resolveWeaponTypeNum({ weaponTypeNum: 0 }, {})).toBeUndefined();
     });
 
+    test('resolveWeaponLabel falls back to pistol/shotgun ammo icons', () => {
+        const cs = new Map<number, string>();
+        cs.set(CS_IMAGES_OLD + 10, 'a_clip');
+        cs.set(CS_IMAGES_OLD + 11, 'a_shells');
+        const pistol = new Int16Array(32);
+        pistol[Stat.ClipIcon] = 10;
+        expect(resolveWeaponLabel({ gunindex: 0, stats: pistol, alive: true }, cs)).toBe('MK23');
+        const shotgun = new Int16Array(32);
+        shotgun[Stat.AmmoIcon] = 11;
+        expect(resolveWeaponLabel({ gunindex: 0, stats: shotgun, alive: true }, cs)).toBe('M3');
+        expect(resolveWeaponLabel({ gunindex: 0, stats: pistol, alive: false }, cs)).toBeUndefined();
+    });
+
+    test('ammo-icon fallback does not override VWEP', () => {
+        const cs = new Map<number, string>();
+        cs.set(CS_IMAGES_OLD + 10, 'a_clip');
+        const stats = new Int16Array(32);
+        stats[Stat.ClipIcon] = 10;
+        expect(resolveWeaponLabel(
+            { weaponTypeNum: 7, gunindex: 0, stats, alive: true },
+            cs,
+        )).toBe('Dual');
+    });
+
     test('isAlive requires PM_NORMAL and health > 0', () => {
         expect(isAlive(PmType.Normal, 100)).toBe(true);
         expect(isAlive(PmType.Normal, 0)).toBe(false);

@@ -69,11 +69,21 @@ const VIEW_MODEL_TO_TYPE: ReadonlyArray<{ frag: string; typeNum: number }> = [
     { frag: 'grapple/tris', typeNum: 23 },
 ];
 
+/** CS_IMAGES basename → weapon label when VWEP/gunindex are missing. */
+const AMMO_ICON_WEAPON_LABELS: Readonly<Record<string, string>> = {
+    a_clip: 'MK23',   // pistol magazines (MK23 / Dual share this)
+    a_shells: 'M3',   // shotgun shells (M3 / HC share this)
+};
+
 export interface WeaponResolveInput {
     /** From entity skinnum>>8 when modelindex2===255; preferred. */
     weaponTypeNum?: number;
     /** player_state.gunindex; secondary via CS_MODELS. */
     gunindex?: number;
+    /** Live stats for ammo-icon fallback (STAT_CLIP_ICON / STAT_AMMO_ICON). */
+    stats?: ArrayLike<number>;
+    /** Gate ammo-icon fallback on alive. */
+    alive?: boolean;
 }
 
 export interface AmmoStatus {
@@ -98,7 +108,8 @@ export function isScoped(fov: number, sniperIcon: number): boolean {
 }
 
 /**
- * Prefer entity vwep typeNum; else match CS_MODELS[gunindex] path.
+ * Prefer entity vwep typeNum; else match CS_MODELS[gunindex] path;
+ * else map pistol/shotgun ammo icons (a_clip→MK23, a_shells→M3).
  * Returns typeNum or undefined if unknown.
  */
 export function resolveWeaponTypeNum(
@@ -111,14 +122,21 @@ export function resolveWeaponTypeNum(
     }
 
     const gun = input.gunindex ?? 0;
-    if (gun <= 0) return undefined;
+    if (gun > 0) {
+        const path = lookupModel(configstrings, gun);
+        if (path) {
+            const lower = path.toLowerCase();
+            for (const { frag, typeNum } of VIEW_MODEL_TO_TYPE) {
+                if (lower.includes(frag)) return typeNum;
+            }
+        }
+    }
 
-    const path = lookupModel(configstrings, gun);
-    if (!path) return undefined;
-
-    const lower = path.toLowerCase();
-    for (const { frag, typeNum } of VIEW_MODEL_TO_TYPE) {
-        if (lower.includes(frag)) return typeNum;
+    const fromAmmo = resolveWeaponLabelFromAmmo(input, configstrings);
+    if (fromAmmo) {
+        for (const [num, label] of Object.entries(AQ2_WEAPON_LABELS)) {
+            if (label === fromAmmo) return Number(num);
+        }
     }
     return undefined;
 }
@@ -129,6 +147,36 @@ export function resolveWeaponLabel(
 ): string | undefined {
     const typeNum = resolveWeaponTypeNum(input, configstrings);
     return typeNum != null ? weaponLabel(typeNum) : undefined;
+}
+
+/**
+ * Last-resort weapon guess from clip/ammo HUD icons.
+ * Only unambiguous families requested for scoreboard: pistol→MK23, shotgun→M3.
+ */
+export function resolveWeaponLabelFromAmmo(
+    input: WeaponResolveInput,
+    configstrings: Map<number, string> | Record<number, string>,
+): string | undefined {
+    if (!input.alive || !input.stats) return undefined;
+    const stats = input.stats;
+
+    const clipIdx = (stats[Stat.ClipIcon] as number | undefined) ?? 0;
+    if (clipIdx > 0) {
+        const label = ammoIconToWeaponLabel(lookupImage(configstrings, clipIdx));
+        if (label) return label;
+    }
+
+    const ammoIdx = (stats[Stat.AmmoIcon] as number | undefined) ?? 0;
+    if (ammoIdx > 0) {
+        return ammoIconToWeaponLabel(lookupImage(configstrings, ammoIdx));
+    }
+    return undefined;
+}
+
+function ammoIconToWeaponLabel(iconPath: string): string | undefined {
+    if (!iconPath) return undefined;
+    const base = iconPath.replace(/^.*\//, '').toLowerCase();
+    return AMMO_ICON_WEAPON_LABELS[base];
 }
 
 export function extractAmmo(stats: ArrayLike<number>, alive: boolean): AmmoStatus | undefined {

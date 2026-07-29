@@ -112,7 +112,12 @@ function serializePlayerForSse(p: PlayerState): SsePlayerPayload {
     const ammoStatus = extractAmmo(p.stats, alive);
     const sniperIcon = p.stats.length > Stat.SniperIcon ? p.stats[Stat.SniperIcon] : 0;
     const weapon = resolveWeaponLabel(
-        { weaponTypeNum: p.weaponTypeNum, gunindex: p.gunindex },
+        {
+            weaponTypeNum: p.weaponTypeNum,
+            gunindex: p.gunindex,
+            stats: p.stats,
+            alive,
+        },
         configstrings,
     );
     const item = resolveSelectedItem(p.stats, alive, configstrings);

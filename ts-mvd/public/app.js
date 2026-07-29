@@ -86,10 +86,17 @@ const ITEM_ICON = {
 };
 
 function loadoutIconHtml(label, map) {
-    if (!label) return '';
+    if (!label) {
+        return '<span class="sb-icon-slot sb-icon-empty" aria-hidden="true"></span>';
+    }
+    const safe = escapeHtml(label);
     const file = map[label];
-    if (!file) return '';
-    return `<img class="sb-icon" src="/assets/${file}" alt="${escapeHtml(label)}" title="${escapeHtml(label)}">`;
+    if (!file) {
+        return `<span class="sb-icon-slot sb-icon-label" title="${safe}">${safe}</span>`;
+    }
+    // onerror: asset file missing on disk → fall back to red label text
+    return `<img class="sb-icon" src="/assets/${file}" alt="${safe}" title="${safe}"` +
+        ` onerror="this.onerror=null;this.outerHTML='<span class=&quot;sb-icon-slot sb-icon-label&quot; title=&quot;${safe}&quot;>${safe}</span>'">`;
 }
 
 // ─── Combat FX ───────────────────────────────────────────────────────────────
@@ -670,9 +677,18 @@ function updatePlayerCount() {
 }
 
 function cacheLoadoutFromPlayer(p) {
+    const prev = loadoutCache[p.number];
+    // Keep last known weapon while alive when VWEP/gunindex resolve fails
+    // (e.g. scoped sniper zeroes gunindex). Clear on death.
+    let weapon = p.weapon;
+    if (p.alive) {
+        if (!weapon && prev && prev.alive && prev.weapon) weapon = prev.weapon;
+    } else {
+        weapon = undefined;
+    }
     loadoutCache[p.number] = {
         health: p.health,
-        weapon: p.weapon,
+        weapon,
         item: p.item,
         ammo: p.ammo,
         clips: p.clips,
@@ -920,16 +936,16 @@ function renderScoreboard() {
         const sticky = loadoutCache[r.number];
         let rowCls = lockedCls ? 'locked' : '';
         let hp = '-';
-        let wpn = '';
-        let item = '';
+        let wpnLabel = '';
+        let itemLabel = '';
         let ammo = '-';
 
         if (live) {
             if (live.alive) {
                 rowCls = (rowCls ? rowCls + ' ' : '') + 'in-stream';
                 hp = typeof live.health === 'number' ? String(live.health) : '-';
-                wpn = loadoutIconHtml(live.weapon, WEAPON_ICON);
-                item = loadoutIconHtml(live.item, ITEM_ICON);
+                wpnLabel = live.weapon || (sticky && sticky.weapon) || '';
+                itemLabel = live.item || '';
                 ammo = formatAmmo(live);
             } else {
                 rowCls = (rowCls ? rowCls + ' ' : '') + 'dead';
@@ -938,14 +954,18 @@ function renderScoreboard() {
             rowCls = (rowCls ? rowCls + ' ' : '') + 'away';
             if (sticky.alive) {
                 hp = typeof sticky.health === 'number' ? String(sticky.health) : '-';
-                wpn = loadoutIconHtml(sticky.weapon, WEAPON_ICON);
-                item = loadoutIconHtml(sticky.item, ITEM_ICON);
+                wpnLabel = sticky.weapon || '';
+                itemLabel = sticky.item || '';
                 ammo = formatAmmo(sticky);
             }
         }
 
+        const wpn = loadoutIconHtml(wpnLabel, WEAPON_ICON);
+        const item = loadoutIconHtml(itemLabel, ITEM_ICON);
+
         const clsAttr = rowCls ? ` class="${rowCls}"` : '';
-        return `<tr data-num="${r.number}"${clsAttr}><td class="wpn">${wpn}</td><td class="item">${item}</td><td>${nameHtml}</td><td class="num">${hp}</td><td class="num">${ammo}</td><td class="num">${r.frags}</td></tr>`;
+        const nameCell = `<td class="name-cell"><span class="loadout-icons">${wpn}${item}</span>${nameHtml}</td>`;
+        return `<tr data-num="${r.number}"${clsAttr}>${nameCell}<td class="num">${hp}</td><td class="num">${ammo}</td><td class="num">${r.frags}</td></tr>`;
     }).join('');
 }
 

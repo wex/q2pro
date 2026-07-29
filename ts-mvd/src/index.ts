@@ -59,6 +59,7 @@ export { PakIndex, PakEntry, PakMethod } from './pak';
 export {
     resolveWeaponLabel,
     resolveWeaponTypeNum,
+    resolveWeaponLabelFromAmmo,
     resolveSelectedItem,
     extractAmmo,
     isAlive,

@@ -11,7 +11,7 @@ browser scoreboard, driven by MVD stream data documented in
 | Status bar `"N player(s)"` | Current-frame stream roster (`inUse −` MVD dummy) | Strict [fable-search §2](fable-search.md) |
 | Map icons | Same roster | Unchanged |
 | Scoreboard membership | Frags merge + `CS_PLAYERSKINS` names | Existing behaviour |
-| Scoreboard HP / Wpn / Item / Ammo | Live frame fields, with **sticky** last-seen cache | Cleared on playerskin CS empty or map change |
+| Scoreboard HP / Ammo + weapon/item icons before name | Live frame fields, with **sticky** last-seen cache | Cleared on playerskin CS empty or map change |
 
 ## Stream roster vs sticky loadout
 
@@ -51,6 +51,11 @@ packetentities ──► cumulative player-edict skinnum/modelindex2
 2. Else match `CS_MODELS + gunindex` path against known view models
    (`v_blast` → MK23, `v_machn` → MP5, …).
 3. `gunindex` may be 0 while scoped (`sv_mvd_nogun` also strips it).
+4. Else map ammo HUD icons: `STAT_CLIP_ICON` / `STAT_AMMO_ICON` →
+   `a_clip`→**MK23**, `a_shells`→**M3** (shared families; Dual/HC collapse to
+   these defaults). Other ammo icons (`a_bullets`, `a_mag`, …) stay unresolved.
+5. UI keeps **last known weapon** while the player stays alive when resolution
+   returns empty (scoped sniper / brief VWEP gaps). Cleared on death.
 
 ### Selected item
 
@@ -74,11 +79,15 @@ From `stats[]` when alive (`pmType === PM_NORMAL` and `STAT_HEALTH > 0`):
 - `STAT_CLIP` — spare magazines
 - `STAT_GRENADES` — raw HUD value (may alternate with medkit)
 
-Dead / away-in-frame rows show `-` for HP/Ammo; Wpn/Item cells are empty
-when there is no special / no mapped icon (Grapple has no icon by design).
+Dead / away-in-frame rows show `-` for HP/Ammo. Each row always reserves two
+20×20 slots before the name (weapon + item): empty when the player has none;
+PNG icon when mapped; **red label text** when a label exists but the asset is
+unmapped or fails to load (e.g. Grapple).
 
-Scoreboard Wpn/Item columns render PNG icons from `public/assets/` via a
-label→filename map in `public/app.js` (`WEAPON_ICON` / `ITEM_ICON`).
+Scoreboard puts those slots immediately before the player name (1px gap) under
+a single **Name** column; headers are Name / HP / Ammo / Frags. Icons come from
+`public/assets/` via a label→filename map in `public/app.js`
+(`WEAPON_ICON` / `ITEM_ICON`).
 
 ## Files
 
