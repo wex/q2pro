@@ -26,6 +26,7 @@ const elTeamScores = document.getElementById('team-scores');
 const elKillfeed = document.getElementById('killfeed');
 const elChat = document.getElementById('chat');
 const elBtnTextures = document.getElementById('btn-textures');
+const elPanel = document.getElementById('panel');
 
 let texturesEnabled = true;      // toggled by Tex button / T hotkey
 let lockedPlayerNum = null;      // null = free camera; integer = locked client slot
@@ -290,6 +291,23 @@ function setLock(num) {
         const row = elScoreboardBody.querySelector(`tr[data-num="${num}"]`);
         if (row) row.classList.add('locked');
     }
+    updateFollowUi();
+    renderScoreboard();
+}
+
+/** True when locked onto a player who is currently alive (live or sticky). */
+function isFollowTargetAlive() {
+    if (lockedPlayerNum === null) return false;
+    const live = players.find((p) => p.number === lockedPlayerNum);
+    if (live) return !!live.alive;
+    const sticky = loadoutCache[lockedPlayerNum];
+    return !!(sticky && sticky.alive);
+}
+
+/** Hide kill feed + chat while camera-locked (`#panel.follow-mode`). */
+function updateFollowUi() {
+    if (!elPanel) return;
+    elPanel.classList.toggle('follow-mode', lockedPlayerNum !== null);
 }
 
 function applyLockCamera() {
@@ -919,13 +937,29 @@ function renderScoreboard() {
 
     rows.sort((a, b) => b.frags - a.frags || a.name.localeCompare(b.name));
 
+    // Follow mode: while the locked player is alive, show only their row.
+    // On death (or unknown alive), restore the full scoreboard.
+    let displayRows = rows;
+    if (lockedPlayerNum !== null && isFollowTargetAlive()) {
+        displayRows = rows.filter((r) => r.number === lockedPlayerNum);
+        if (displayRows.length === 0) {
+            const info = getPlayerInfo(lockedPlayerNum);
+            const sbp = (scoreboardState.players || {})[lockedPlayerNum];
+            displayRows = [{
+                number: lockedPlayerNum,
+                name: info.name || `#${lockedPlayerNum}`,
+                frags: (sbp && sbp.frags) || 0,
+            }];
+        }
+    }
+
     // Apply team colouring only when there are >= 2 distinct teams. Pure FFA
     // (every player on a unique team index) renders as plain white.
     const teamMap = getTeamMap();
     const distinctTeams = new Set(Object.values(teamMap));
     const colourByTeam = distinctTeams.size >= 2 && distinctTeams.size < Object.keys(teamMap).length;
 
-    elScoreboardBody.innerHTML = rows.map((r) => {
+    elScoreboardBody.innerHTML = displayRows.map((r) => {
         const teamIdx = teamMap[r.number];
         const teamCls = colourByTeam && teamIdx !== undefined && teamIdx < TEAM_COLOURS.length
             ? ` team-${teamIdx}` : '';
@@ -967,6 +1001,8 @@ function renderScoreboard() {
         const nameCell = `<td class="name-cell"><span class="loadout-icons">${wpn}${item}</span>${nameHtml}</td>`;
         return `<tr data-num="${r.number}"${clsAttr}>${nameCell}<td class="num">${hp}</td><td class="num">${ammo}</td><td class="num">${r.frags}</td></tr>`;
     }).join('');
+
+    updateFollowUi();
 }
 
 function formatGametime(frameNumber) {
