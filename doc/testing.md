@@ -28,6 +28,7 @@ ts-mvd/test/
   player-loadout.test.ts  # AQ2 weapon/item/ammo resolvers
   combat-fx.test.ts       # CombatFxResolver hit/muzzleflash → damage events
   pak.test.ts             # PakIndex .pak / .pkz fallback
+  bsp.test.ts             # BspFile.load lump bounds checks
 ```
 
 ## Configuration

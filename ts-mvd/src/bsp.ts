@@ -133,8 +133,18 @@ export class BspFile {
     const lumpLen = new Array<number>(HEADER_LUMPS);
     for (let i = 0; i < HEADER_LUMPS; i++) {
       const base = 8 + i * 8;
-      lumpOfs[i] = buf.readUInt32LE(base);
-      lumpLen[i] = buf.readUInt32LE(base + 4);
+      if (base + 8 > buf.length) {
+        throw new Error(`BSP header truncated (lump ${i})`);
+      }
+      const ofs = buf.readUInt32LE(base);
+      const len = buf.readUInt32LE(base + 4);
+      if (len > 0 && (ofs > buf.length || ofs + len > buf.length)) {
+        throw new Error(
+          `BSP lump ${i} out of bounds (ofs=${ofs} len=${len} file=${buf.length})`,
+        );
+      }
+      lumpOfs[i] = ofs;
+      lumpLen[i] = len;
     }
 
     return new BspFile({

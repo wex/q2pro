@@ -104,10 +104,11 @@ describe('HTTP control surface', () => {
         const res = await request(httpServer)
             .post('/connect')
             .set('content-type', 'application/json')
-            .send({ host: 'fake.local', port: 27910 });
+            .send({ host: 'fake.local', port: 27910, password: 'secret' });
         expect(res.status).toBe(202);
         expect(res.body.host).toBe('fake.local');
         expect(res.body.port).toBe(27910);
+        expect(res.body.password).toBeUndefined();
 
         const state = await request(httpServer).get('/state');
         // The fake socket never raises 'connect', so the client stays in
@@ -121,7 +122,7 @@ describe('HTTP control surface', () => {
         const postRes = await request(httpServer)
             .post('/replay?file=demo.mvd2');
         expect(postRes.status).toBe(202);
-        expect(postRes.body.file).toBe(path.join(DEMOS_DIR, 'demo.mvd2'));
+        expect(postRes.body.file).toBe('demo.mvd2');
 
         const state = await request(httpServer).get('/state');
         expect(state.body.mode).toBe('replay');
@@ -132,6 +133,19 @@ describe('HTTP control surface', () => {
 
         const after = await request(httpServer).get('/state');
         expect(after.body.mode).toBe('idle');
+    });
+
+    test('POST /replay rejects path traversal', async () => {
+        const res = await request(httpServer)
+            .post('/replay?file=../../etc/passwd');
+        expect(res.status).toBe(400);
+        expect(res.body.error).toBe('invalid-file');
+    });
+
+    test('missing static asset with extension returns 404 not SPA HTML', async () => {
+        const res = await request(httpServer).get('/assets/no-such-icon.png');
+        expect(res.status).toBe(404);
+        expect(res.headers['content-type']).toMatch(/text\/plain/);
     });
 
     test('POST /replay with missing file returns 404', async () => {

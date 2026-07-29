@@ -42,17 +42,38 @@ describe('player-loadout', () => {
         expect(resolveWeaponTypeNum({ weaponTypeNum: 0 }, {})).toBeUndefined();
     });
 
-    test('resolveWeaponLabel falls back to pistol/shotgun ammo icons', () => {
+    test('resolveWeaponLabel falls back to clip/ammo icons', () => {
         const cs = new Map<number, string>();
         cs.set(CS_IMAGES_OLD + 10, 'a_clip');
         cs.set(CS_IMAGES_OLD + 11, 'a_shells');
+        cs.set(CS_IMAGES_OLD + 12, 'a_m4');
+        cs.set(CS_IMAGES_OLD + 13, 'a_mag');
+        cs.set(CS_IMAGES_OLD + 14, 'a_bullets');
         const pistol = new Int16Array(32);
         pistol[Stat.ClipIcon] = 10;
         expect(resolveWeaponLabel({ gunindex: 0, stats: pistol, alive: true }, cs)).toBe('MK23');
         const shotgun = new Int16Array(32);
         shotgun[Stat.AmmoIcon] = 11;
         expect(resolveWeaponLabel({ gunindex: 0, stats: shotgun, alive: true }, cs)).toBe('M3');
+        const m4 = new Int16Array(32);
+        m4[Stat.ClipIcon] = 12;
+        m4[Stat.AmmoIcon] = 14; // shared a_bullets — CLIP wins
+        expect(resolveWeaponLabel({ gunindex: 0, stats: m4, alive: true }, cs)).toBe('M4');
+        const mp5 = new Int16Array(32);
+        mp5[Stat.ClipIcon] = 13;
+        expect(resolveWeaponLabel({ gunindex: 0, stats: mp5, alive: true }, cs)).toBe('MP5');
+        const ssg = new Int16Array(32);
+        ssg[Stat.ClipIcon] = 14;
+        expect(resolveWeaponLabel({ gunindex: 0, stats: ssg, alive: true }, cs)).toBe('SSG');
         expect(resolveWeaponLabel({ gunindex: 0, stats: pistol, alive: false }, cs)).toBeUndefined();
+    });
+
+    test('STAT_AMMO_ICON a_bullets alone does not resolve (ambiguous)', () => {
+        const cs = new Map<number, string>();
+        cs.set(CS_IMAGES_OLD + 14, 'a_bullets');
+        const stats = new Int16Array(32);
+        stats[Stat.AmmoIcon] = 14;
+        expect(resolveWeaponLabel({ gunindex: 0, stats, alive: true }, cs)).toBeUndefined();
     });
 
     test('ammo-icon fallback does not override VWEP', () => {
@@ -64,6 +85,20 @@ describe('player-loadout', () => {
             { weaponTypeNum: 7, gunindex: 0, stats, alive: true },
             cs,
         )).toBe('Dual');
+    });
+
+    test('clip-icon recovers M4 when gunindex is null sprite and VWEP typeNum is 0', () => {
+        const cs = new Map<number, string>();
+        cs.set(CS_MODELS_OLD + 9, 'sprites/null.sp2');
+        cs.set(CS_IMAGES_OLD + 24, 'a_m4');
+        cs.set(CS_IMAGES_OLD + 26, 'a_bullets');
+        const stats = new Int16Array(32);
+        stats[Stat.ClipIcon] = 24;
+        stats[Stat.AmmoIcon] = 26;
+        expect(resolveWeaponLabel(
+            { weaponTypeNum: 0, gunindex: 9, stats, alive: true },
+            cs,
+        )).toBe('M4');
     });
 
     test('isAlive requires PM_NORMAL and health > 0', () => {

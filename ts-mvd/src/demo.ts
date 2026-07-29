@@ -66,6 +66,11 @@ export class MvdDemoReader extends EventEmitter {
 
     /** Parse an in-memory `.mvd2` buffer and start emitting. */
     playBuffer(buf: Buffer): this {
+        // Clear any prior tick timer before resetting state (re-play safety).
+        if (this.tickTimer) {
+            clearInterval(this.tickTimer);
+            this.tickTimer = null;
+        }
         this.stopped = false;
         this.messages = [];
         this.cursor = 0;

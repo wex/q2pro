@@ -249,8 +249,10 @@ and cumulative player-edict VWEP (`weaponTypeNum` when `modelindex2 === 255`).
 ### Implemented in ts-mvd (see [player-loadout.md](player-loadout.md))
 
 1. **Weapon resolver** — VWEP `skinnum >> 8`, then `gunindex → CS_MODELS`,
-   then pistol/shotgun ammo icons (`a_clip`→MK23, `a_shells`→M3), plus UI
-   sticky last-known weapon while alive (covers scoped sniper `gunindex === 0`).
+   then `STAT_CLIP_ICON` ammo-item icons (`a_m4`→M4, `a_mag`→MP5,
+   `a_bullets`→SSG, `a_clip`→MK23, `a_shells`→M3) and a weaker
+   `STAT_AMMO_ICON` family fallback, plus UI sticky last-known weapon while
+   alive (covers scoped sniper / `null.sp2` gunindex gaps).
 2. **Ammo/loadout view** — `STAT_AMMO` / `STAT_CLIP` on the scoreboard
    (`ammo/clips`); alive-gated. Grenade/medkit disambiguation via
    `STAT_GRENADE_ICON` is still not surfaced as its own column.

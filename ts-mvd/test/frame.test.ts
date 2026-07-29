@@ -209,6 +209,23 @@ describe('MvdFrameParser misc', () => {
         expect(classifyChat('Alice: hello world\n')).toEqual({
             name: 'Alice', text: 'hello world', raw: 'Alice: hello world',
         });
+        // DEL (0x7F) and 0x80 are outside printable ASCII 0x20-0x7E.
+        expect(classifyChat('n\x7Fx: a\x80b\n')).toEqual({
+            name: 'nx', text: 'ab', raw: 'nx: ab',
+        });
+    });
+
+    test('unknown MVD opcode fires onParseWarning and counts dropped bytes', () => {
+        const parser = new MvdFrameParser();
+        const warnings: Array<{ code: string; opcode: number; droppedBytes?: number }> = [];
+        parser.onParseWarning = (w) => warnings.push(w);
+        // Opcode byte 0x7F → low SVCMD_MASK bits are the op (0x1F = 31), unknown.
+        parser.parse(Buffer.from([0x7f, 0xaa, 0xbb, 0xcc]));
+        expect(parser.parseWarningCount).toBe(1);
+        expect(parser.droppedBytes).toBe(3);
+        expect(warnings).toEqual([
+            { code: 'unknown_mvd_op', opcode: 0x1f, offset: 1, droppedBytes: 3 },
+        ]);
     });
 
     test('malformed input throws, reset() restores a usable parser', () => {

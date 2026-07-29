@@ -14,6 +14,7 @@ const elConnectForm = document.getElementById('connect-form');
 const elReplayForm = document.getElementById('replay-form');
 const elConnectHost = document.getElementById('connect-host');
 const elConnectPort = document.getElementById('connect-port');
+const elConnectPassword = document.getElementById('connect-password');
 const elDemoSelect = document.getElementById('demo-select');
 const elSessionError = document.getElementById('session-error');
 const elTabs = document.querySelectorAll('#session-modal .tab');
@@ -1420,10 +1421,11 @@ elConnectForm.addEventListener('submit', async (e) => {
     try {
         const host = elConnectHost.value.trim();
         const port = parseInt(elConnectPort.value, 10);
+        const password = elConnectPassword.value;
         const res = await fetch('/connect', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ host, port }),
+            body: JSON.stringify({ host, port, password }),
         });
         if (!res.ok) {
             const body = await res.json().catch(() => ({}));

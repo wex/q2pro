@@ -102,4 +102,24 @@ describe('MvdDemoReader realtime pacing', () => {
         expect(received).toHaveLength(1);
         expect(endFired).toBe(false);
     });
+
+    test('re-play clears the previous tick timer (no double-speed)', () => {
+        const msgs = [Buffer.from([1]), Buffer.from([2]), Buffer.from([3]), Buffer.from([4])];
+        const mvd = buildMvd2(msgs, true);
+        const reader = new MvdDemoReader({ realtime: true, tickMs: 10 });
+        const received: Buffer[] = [];
+        reader.on('message', (m) => received.push(m));
+
+        reader.playBuffer(mvd);
+        jest.advanceTimersByTime(10);
+        expect(received).toHaveLength(1);
+
+        // Start a fresh play without stop() — must not stack intervals.
+        reader.playBuffer(mvd);
+        received.length = 0;
+        jest.advanceTimersByTime(10);
+        expect(received).toHaveLength(1);
+        jest.advanceTimersByTime(10);
+        expect(received).toHaveLength(2);
+    });
 });

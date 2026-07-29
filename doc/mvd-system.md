@@ -370,6 +370,15 @@ DISCONNECTED → CONNECTING → PREPARING → CONNECTED → RESUMING → READING
 Reconnection uses exponential backoff: starts at 5s (`GTV_DEFAULT_BACKOFF`),
 increases by 15–30s per failure, caps at 5 hours (`GTV_MAXIMUM_BACKOFF`).
 
+In `ts-mvd` (`MvdClient`), exponential backoff is
+`reconnectDelay * 1.5^attempt` capped by `reconnectMaxDelay`. User-initiated
+`connect()` resets the attempt counter; successful `GTS_HELLO` also resets it.
+Recoverable errors (`BAD_MAGIC`, `OVERSIZE`, `UNKNOWN_OPCODE`, `GTS_ERROR`,
+`BAD_HELLO`, server `Disconnect`, end-of-stream) soft-close and reconnect when
+`autoReconnect` is on. Fatal errors (`BadRequest`, `NoAccess`) and user
+`disconnect()` set `destroyed` and do not reconnect. Manual `disconnect()`
+always emits `close` (so the app can broadcast SSE `liveStop`).
+
 ### 4.3 Delay Buffer
 
 When receiving live stream data, frames are **not parsed immediately**. Instead

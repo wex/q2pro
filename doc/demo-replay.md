@@ -23,14 +23,15 @@ clients under `ts-mvd/public/` see identical `serverdata`, `configstring`,
 |--------|-------------------------|-------------------------------------------------|
 | GET    | `/state`                | `{ mode, clientState, replayFile }`             |
 | GET    | `/demos`                | `{ demos: string[] }` — `.mvd2` filenames in `ts-mvd/assets/demos/` |
-| POST   | `/connect`              | Start live GTV (rejected if replay active). Optional JSON body `{ host?, port? }`; defaults fall back to the CLI args. |
-| POST   | `/disconnect`           | Stop live GTV                                   |
-| POST   | `/replay[?file=<name>]` | Start demo replay; default `assets/demos/demo.mvd2`. Bare filenames (no `/`) are resolved under `ts-mvd/assets/demos/`; paths with a slash are resolved relative to `ts-mvd/`. |
+| POST   | `/connect`              | Start live GTV (rejected if replay active). Optional JSON body `{ host?, port?, password? }`; defaults fall back to the CLI args for host/port; password defaults to `''`. |
+| POST   | `/disconnect`           | Stop live GTV (emits SSE `liveStop`)        |
+| POST   | `/replay[?file=<name>]` | Start demo replay; default `assets/demos/demo.mvd2`. Filenames are confined to `ts-mvd/assets/demos/` (basename only; path traversal rejected). |
 | DELETE | `/replay`               | Stop active replay                              |
 
 `POST /replay` responds:
-- `202 { file }` — replay accepted and started.
-- `404 { error: 'not-found', file }` — path does not exist.
+- `202 { file }` — replay accepted and started (`file` is the basename).
+- `400 { error: 'invalid-file' }` — path traversal / invalid name.
+- `404 { error: 'not-found', file }` — demo does not exist under `assets/demos/`.
 - `409 { error: 'replay-active' \| 'live-active', … }` — another mode is busy.
 
 ## SSE events added
@@ -47,8 +48,8 @@ In addition to the existing stream events:
 `ts-mvd/public/index.html` shows a modal start screen at load time when
 `/state` reports `mode: 'idle'`. The modal has two tabs:
 
-- **Connect to server** — hostname + port inputs, submits
-  `POST /connect` with JSON `{ host, port }`.
+- **Connect to server** — hostname, port, and password inputs; submits
+  `POST /connect` with JSON `{ host, port, password }`.
 - **Replay a demo** — dropdown populated from `GET /demos`, submits
   `POST /replay?file=<name>`.
 

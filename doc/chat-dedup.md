@@ -4,7 +4,7 @@
 
 This note documents how `ts-mvd` dedupes `PRINT_CHAT` events when parsing
 MVD2 streams produced by Q2Pro. It applies to any consumer that subscribes
-to `MvdFrameParser.onChat` (e.g. the `example.ts` public UI SSE broadcast).
+to `MvdFrameParser.onChat` (e.g. the `app.ts` public UI SSE broadcast).
 
 ## Problem
 
@@ -90,7 +90,7 @@ differs).
 
 No API change. Consumers of `MvdClient` / `MvdFrameParser` see fewer
 redundant `onChat` events without having to maintain their own dedup
-state. `example.ts`'s `chatLog` now contains one entry per chat line
+state. `app.ts`'s `chatLog` now contains one entry per chat line
 regardless of how many players are on the server.
 
 ## ASCII filter

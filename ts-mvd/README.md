@@ -26,8 +26,7 @@ const client = new MvdClient({
     port: 27910,
     username: 'spectator',
     password: '',
-    deflate: true,        // request zlib compression
-    autoReconnect: true,  // reconnect on disconnect
+    autoReconnect: true,  // reconnect on drop / recoverable protocol errors
 });
 
 // Connection lifecycle events
@@ -56,11 +55,15 @@ client.on('stateChange', ({ from, to }) => console.log(from, '->', to));
 client.connect();
 ```
 
-## Run Example
+## Run the control surface
 
 ```bash
-npx ts-node src/example.ts [host] [port]
+npm run app
+# or: npx tsx src/app.ts [host] [port]
 ```
+
+Opens the HTTP UI on port 8080. Use the **Connect to server** form (host, port,
+password) or `POST /connect` with JSON `{ host?, port?, password? }`.
 
 ## Demo Playback
 
@@ -89,7 +92,7 @@ curl -X POST   http://localhost:8080/replay            # default assets/demos/de
 curl -X POST   'http://localhost:8080/replay?file=foo.mvd2'   # bare name → assets/demos/
 curl -X DELETE http://localhost:8080/replay
 curl -X POST   -H 'content-type: application/json' \
-     -d '{"host":"example.com","port":27910}' \
+     -d '{"host":"example.com","port":27910,"password":"secret"}' \
      http://localhost:8080/connect                     # live GTV with explicit target
 curl -X POST   http://localhost:8080/disconnect
 curl           http://localhost:8080/state
@@ -178,18 +181,20 @@ DISCONNECTED → CONNECTING → CONNECTED → PREPARING → READY → STREAMING
 | `username` | `string` | `''` | GTV username |
 | `password` | `string` | `''` | GTV password |
 | `version` | `string` | `'ts-mvd/1.0'` | Client version string |
-| `deflate` | `boolean` | `true` | Request zlib compression |
 | `stringCmds` | `boolean` | `true` | Request command forwarding |
 | `maxBuf` | `number` | `25` | Server-side buffer size hint |
 | `pingInterval` | `number` | `60000` | Keepalive interval (ms) |
-| `autoReconnect` | `boolean` | `false` | Auto-reconnect on drop |
+| `autoReconnect` | `boolean` | `false` | Auto-reconnect on drop / recoverable errors |
 | `reconnectDelay` | `number` | `5000` | Initial reconnect delay (ms) |
 | `reconnectMaxDelay` | `number` | `300000` | Max reconnect delay (ms) |
+
+`GTF_DEFLATE` is not requested; zlib stream compression is not implemented.
 
 ### Methods
 
 - **`connect()`** — Initiate TCP connection and handshake
-- **`disconnect()`** — Close connection
+- **`disconnect()`** — Close connection (emits `close`; no auto-reconnect)
+- **`setTarget(host, port, password?)`** — Update GTV target while disconnected
 - **`sendPing()`** — Send keepalive ping
 - **`sendStringCmd(cmd)`** — Forward a command to the game server
 - **`sendStreamStart()`** — Request stream start

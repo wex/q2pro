@@ -56,6 +56,12 @@ describe('BufferWriter / BufferReader', () => {
         expect(r.position).toBeLessThanOrEqual(10);
     });
 
+    test('readBytes throws on under-read', () => {
+        const r = new BufferReader(Buffer.from([1, 2]));
+        expect(() => r.readBytes(3)).toThrow(RangeError);
+        expect(r.remaining).toBe(2);
+    });
+
     test('readBytes slices and advances offset', () => {
         const src = Buffer.from([1, 2, 3, 4, 5]);
         const r = new BufferReader(src);

@@ -237,6 +237,13 @@ export interface StatsEvent {
     stats: Int16Array;
 }
 
+export interface ParseWarning {
+    code: 'unknown_mvd_op' | 'unknown_svc_op' | 'unknown_temp_entity';
+    opcode: number;
+    offset: number;
+    droppedBytes?: number;
+}
+
 export interface DeathEvent {
     /** Client number of the player who just died. */
     clientNum: number;
@@ -308,6 +315,13 @@ export class MvdFrameParser {
     onStats: ((event: StatsEvent) => void) | null = null;
     onMuzzleFlash: ((event: MuzzleFlashEvent) => void) | null = null;
     onDeath: ((event: DeathEvent) => void) | null = null;
+    /** Fired when an unknown MVD/svc opcode or TE type stops further walking. */
+    onParseWarning: ((info: ParseWarning) => void) | null = null;
+
+    /** Count of parse warnings since construction / last reset. */
+    parseWarningCount = 0;
+    /** Bytes left unread when an unknown outer MVD opcode aborted the buffer. */
+    droppedBytes = 0;
 
     /**
      * Feed a raw MVD stream data buffer (the payload from GTS_STREAM_DATA).
@@ -351,8 +365,18 @@ export class MvdFrameParser {
                     break;
                 case MvdOp.Nop:
                     break;
-                default:
+                default: {
+                    const dropped = reader.remaining;
+                    this.parseWarningCount++;
+                    this.droppedBytes += dropped;
+                    this.onParseWarning?.({
+                        code: 'unknown_mvd_op',
+                        opcode: cmd,
+                        offset: reader.position,
+                        droppedBytes: dropped,
+                    });
                     return;
+                }
             }
         }
     }
@@ -372,6 +396,8 @@ export class MvdFrameParser {
         this.statsArrayLen = 32;
         this.mvdDummyNum = -1;
         this.printSeenThisTick.clear();
+        this.parseWarningCount = 0;
+        this.droppedBytes = 0;
     }
 
     private getOrCreatePlayerState(number: number): PlayerState {
@@ -919,6 +945,12 @@ export class MvdFrameParser {
                     break;
                 default:
                     // Unknown or variable-length op we can't walk safely: stop.
+                    this.parseWarningCount++;
+                    this.onParseWarning?.({
+                        code: 'unknown_svc_op',
+                        opcode: op,
+                        offset: r.position,
+                    });
                     return;
             }
         }
@@ -1069,6 +1101,12 @@ export class MvdFrameParser {
         }
 
         // Unknown or variable-format TE — we can't walk past it safely.
+        this.parseWarningCount++;
+        this.onParseWarning?.({
+            code: 'unknown_temp_entity',
+            opcode: type,
+            offset: r.position,
+        });
         this.onTempEntity?.({ type });
         return false;
     }
@@ -1254,11 +1292,11 @@ function classifyHitTaken(text: string): { attacker: string; raw: string } | nul
  * Normalize a PRINT_CHAT line into a `ChatEvent`.
  *
  * Q2 embeds BEL (0x07) as a chat "ding" and uses high-bit bytes for green /
- * coloured text. Drop anything outside printable ASCII (codepoints 32..128)
+ * coloured text. Drop anything outside printable ASCII (codepoints 32..126)
  * before splitting so the browser receives a clean string.
  */
 export function classifyChat(text: string): ChatEvent {
-    const cleaned = text.replace(/[^\x20-\x80]/g, '');
+    const cleaned = text.replace(/[^\x20-\x7E]/g, '');
     const raw = cleaned.replace(/\n+$/, '');
     const sep = raw.indexOf(': ');
     if (sep > 0) {

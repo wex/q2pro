@@ -49,6 +49,7 @@ export {
     StatsEvent,
     MuzzleFlashEvent,
     DeathEvent,
+    ParseWarning,
 } from './frame';
 export {
     CombatFxResolver,

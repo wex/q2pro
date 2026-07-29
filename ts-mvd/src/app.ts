@@ -42,7 +42,7 @@ const client = new MvdClient({
     host,
     port,
     username: 'ts-mvd',
-    password: 'aq2world',
+    password: '',
     autoReconnect: true,
     reconnectDelay: 5000,
 });
@@ -679,9 +679,10 @@ const httpServer = http.createServer((req, res) => {
             return;
         }
         readJsonBody(req).then((body) => {
-            const b = (body ?? {}) as { host?: unknown; port?: unknown };
+            const b = (body ?? {}) as { host?: unknown; port?: unknown; password?: unknown };
             let nextHost = defaultHost;
             let nextPort = defaultPort;
+            let nextPassword = '';
             if (b.host !== undefined) {
                 if (typeof b.host !== 'string' || b.host.trim().length === 0) {
                     sendJson(res, 400, { error: 'invalid-host' });
@@ -697,9 +698,16 @@ const httpServer = http.createServer((req, res) => {
                 }
                 nextPort = p;
             }
+            if (b.password !== undefined) {
+                if (typeof b.password !== 'string') {
+                    sendJson(res, 400, { error: 'invalid-password' });
+                    return;
+                }
+                nextPassword = b.password;
+            }
             host = nextHost;
             port = nextPort;
-            client.setTarget(host, port);
+            client.setTarget(host, port, nextPassword);
             client.connect();
             sendJson(res, 202, { state: client.state, host, port });
         }).catch((err: Error) => {
@@ -733,18 +741,25 @@ const httpServer = http.createServer((req, res) => {
         let filePath: string;
         if (!requested) {
             filePath = DEFAULT_DEMO;
-        } else if (!requested.includes('/') && !requested.includes('\\')) {
-            // Bare filename: resolve under assets/demos/.
-            filePath = path.join(DEMOS_DIR, requested);
         } else {
-            filePath = path.resolve(__dirname, '..', requested);
+            // Confine to DEMOS_DIR — reject path separators / traversal.
+            const base = path.basename(requested);
+            if (base !== requested || requested.includes('\0')) {
+                sendJson(res, 400, { error: 'invalid-file' });
+                return;
+            }
+            filePath = path.resolve(DEMOS_DIR, base);
+            if (filePath !== DEMOS_DIR && !filePath.startsWith(DEMOS_DIR + path.sep)) {
+                sendJson(res, 400, { error: 'invalid-file' });
+                return;
+            }
         }
         if (!fs.existsSync(filePath)) {
-            sendJson(res, 404, { error: 'not-found', file: filePath });
+            sendJson(res, 404, { error: 'not-found', file: path.basename(filePath) });
             return;
         }
         startReplay(filePath);
-        sendJson(res, 202, { file: filePath });
+        sendJson(res, 202, { file: path.basename(filePath) });
         return;
     }
 
@@ -781,17 +796,22 @@ const httpServer = http.createServer((req, res) => {
     const mapMatch = url.pathname.match(/^\/maps\/([\w.-]+)$/);
     if (mapMatch) {
         const mapName = mapMatch[1];
-        const bsp = loadBsp(mapName);
-        if (!bsp) {
-            res.writeHead(404, { 'Content-Type': 'text/plain' });
-            res.end(`Map not found: ${mapName}`);
-            return;
-        }
         try {
+            const bsp = loadBsp(mapName);
+            if (!bsp) {
+                res.writeHead(404, { 'Content-Type': 'text/plain' });
+                res.end(`Map not found: ${mapName}`);
+                return;
+            }
             const noTextures = url.searchParams.has('notextures');
             const texturesDir = noTextures ? undefined : prepareTexturesDir(bsp);
             const colormapPath = noTextures ? undefined : prepareColormap();
-            const svg = generateMapSvg(bsp, mapName, { showGrid: url.searchParams.has('grid'), texturesDir, colormapPath });
+            const svg = generateMapSvg(bsp, mapName, {
+                showGrid: url.searchParams.has('grid'),
+                showMarkers: url.searchParams.has('markers'),
+                texturesDir,
+                colormapPath,
+            });
             res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
             res.end(svg);
         } catch (err: any) {
@@ -834,18 +854,46 @@ const httpServer = http.createServer((req, res) => {
         '.html': 'text/html',
         '.js': 'application/javascript',
         '.css': 'text/css',
+        '.png': 'image/png',
+        '.svg': 'image/svg+xml',
+        '.ico': 'image/x-icon',
     };
 
-    let filePath = path.join(PUBLIC_DIR, url.pathname === '/' ? 'index.html' : url.pathname);
-    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-        filePath = path.join(PUBLIC_DIR, 'index.html');
+    const reqPath = url.pathname === '/' ? '/index.html' : url.pathname;
+    // Reject path traversal; keep resolved path under PUBLIC_DIR.
+    const filePath = path.resolve(PUBLIC_DIR, '.' + reqPath);
+    if (filePath !== PUBLIC_DIR && !filePath.startsWith(PUBLIC_DIR + path.sep)) {
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.end('Bad request');
+        return;
     }
 
-    const ext = path.extname(filePath);
-    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        const ext = path.extname(filePath);
+        const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+        try {
+            const content = fs.readFileSync(filePath);
+            res.writeHead(200, { 'Content-Type': contentType });
+            res.end(content);
+        } catch {
+            res.writeHead(404, { 'Content-Type': 'text/plain' });
+            res.end('Not found');
+        }
+        return;
+    }
+
+    // SPA fallback: extensionless paths get index.html; paths with an
+    // extension (e.g. missing .png) return a real 404.
+    const basename = path.basename(reqPath);
+    if (basename.includes('.')) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not found');
+        return;
+    }
+
     try {
-        const content = fs.readFileSync(filePath);
-        res.writeHead(200, { 'Content-Type': contentType });
+        const content = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'));
+        res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(content);
     } catch {
         res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -900,7 +948,7 @@ if (require.main === module) {
         console.log(`[http]   GET  /state        — current mode (idle/live/replay)`);
         console.log(`[http]   GET  /demos        — list demo filenames in assets/demos/`);
         console.log(`[http]   GET  /paks         — pak/pkz archives indexed at startup`);
-        console.log(`[http]   POST /connect      — start live GTV (body: { host?, port? }; defaults ${defaultHost}:${defaultPort})`);
+        console.log(`[http]   POST /connect      — start live GTV (body: { host?, port?, password? }; defaults ${defaultHost}:${defaultPort})`);
         console.log(`[http]   POST /disconnect   — stop live GTV`);
         console.log(`[http]   POST /replay[?file=...] — replay a .mvd2 demo`);
         console.log(`[http]   DEL  /replay       — stop active replay`);

@@ -94,12 +94,16 @@ Order in `resolveWeaponTypeNum` / `resolveWeaponLabel`
    (see `ShowGun` in `src/action/p_weapon.c`). **Unaffected by sniper zoom.**
 2. Else match `CS_MODELS + gunindex` path against known view models
    (`v_blast` → MK23, `v_machn` → MP5, `v_sniper` → SSG, `v_dual` → Dual, …).
-3. `gunindex` may be 0 while scoped (`fov != 90` in `p_weapon.c`) or when
-   `sv_mvd_nogun` strips view models — do **not** treat that as “unarmed”.
-4. Else map ammo HUD icons (`STAT_CLIP_ICON` then `STAT_AMMO_ICON` →
-   `CS_IMAGES`): `a_clip`→**MK23**, `a_shells`→**M3**. Dual shares pistol
-   clips with MK23; HC shares shells with M3. Other icons (`a_bullets`,
-   `a_mag`, `a_m4`, …) stay unresolved at this step.
+3. `gunindex` may be 0 while scoped (`fov != 90` in `p_weapon.c`), point at
+   `sprites/null.sp2`, or be stripped by `sv_mvd_nogun` — do **not** treat
+   that as “unarmed”.
+4. Else map HUD icons (`STAT_CLIP_ICON` then `STAT_AMMO_ICON` → `CS_IMAGES`):
+   - **CLIP** (ammo-item icons): `a_clip`→MK23, `a_mag`→MP5, `a_m4`→**M4**,
+     `a_shells`→M3, `a_bullets`→SSG. Dual shares `a_clip`; HC shares
+     `a_shells`.
+   - **AMMO** (weaker): only `a_clip`→MK23, `a_shells`→M3, `w_knife`→Knife,
+     `a_m61frag`→G. Do **not** map `a_bullets` here — MK23/MP5/M4/Dual/SSG
+     all use it for `STAT_AMMO_ICON`.
 5. UI sticky last-known weapon while alive (see above).
 
 Short labels: MK23, MP5, M4, M3, HC, SSG, Dual, Knife, G, Grapple.
@@ -147,7 +151,8 @@ Used for loadout cache metadata; map overlay scope FX is optional/future.
 ## Limitations
 
 - Labels and icon maps are **AQ2/TNG-specific**.
-- Ammo-icon fallback collapses Dual→MK23 and HC→M3.
+- Clip/ammo-icon fallback collapses Dual→MK23 and HC→M3 (`a_clip` /
+  `a_shells`). `a_bullets` is only trusted via `STAT_CLIP_ICON` (sniper).
 - Sticky can show stale loadout for a connected client no longer in the
   stream (e.g. spectating). Map layer stays current-frame only.
 - Full inventory accumulation across `STAT_WEAPONS_ICON` /

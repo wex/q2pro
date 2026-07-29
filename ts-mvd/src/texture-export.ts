@@ -43,4 +43,9 @@ function main(argv: string[]): number {
   return 0;
 }
 
-process.exit(main(process.argv.slice(2)));
+const isCLI =
+  process.argv[1]?.endsWith('texture-export.ts') ||
+  process.argv[1]?.endsWith('texture-export.js');
+if (isCLI) {
+  process.exit(main(process.argv.slice(2)));
+}

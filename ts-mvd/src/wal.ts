@@ -9,16 +9,18 @@ import * as zlib from 'node:zlib';
 
 const PCX_PALETTE_SIZE = 768;
 
-let paletteCache: Uint8Array | null = null;
+const paletteCache = new Map<string, Uint8Array>();
 
 export function loadPalette(colormapPath: string): Uint8Array {
-  if (paletteCache) return paletteCache;
+  const cached = paletteCache.get(colormapPath);
+  if (cached) return cached;
   const buf = fs.readFileSync(colormapPath);
   if (buf.length < PCX_PALETTE_SIZE) {
     throw new Error(`colormap.pcx too small (${buf.length} bytes)`);
   }
-  paletteCache = new Uint8Array(buf.buffer, buf.byteOffset + buf.length - PCX_PALETTE_SIZE, PCX_PALETTE_SIZE);
-  return paletteCache;
+  const palette = new Uint8Array(buf.buffer, buf.byteOffset + buf.length - PCX_PALETTE_SIZE, PCX_PALETTE_SIZE);
+  paletteCache.set(colormapPath, palette);
+  return palette;
 }
 
 // ─── WAL header layout ──────────────────────────────────────────────────────
@@ -109,7 +111,6 @@ export function rgbaToPngDataUrl(rgba: Uint8Array, width: number, height: number
   const raw = Buffer.alloc(height * rowLen);
   for (let y = 0; y < height; y++) {
     raw[y * rowLen] = 0; // filter: None
-    rgba.copyWithin(0, 0); // noop, just for clarity
     Buffer.from(rgba.buffer, rgba.byteOffset + y * width * 4, width * 4)
       .copy(raw, y * rowLen + 1);
   }

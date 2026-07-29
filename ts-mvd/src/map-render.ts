@@ -57,7 +57,6 @@ function hashString(s: string): number {
 
 function computePatternTransform(
   ti: Texinfo,
-  tex: LoadedTexture,
   mins: Vec3,
   maxs: Vec3,
   margin: number,
@@ -215,7 +214,7 @@ export function generateMapSvg(
     if (tex && !patternTexinfoSet.has(p.texinfoIdx)) {
       patternTexinfoSet.add(p.texinfoIdx);
       const ti = bsp.texinfo[p.texinfoIdx];
-      const transform = computePatternTransform(ti, tex, world.mins, world.maxs, MARGIN, LABEL_HEIGHT);
+      const transform = computePatternTransform(ti, world.mins, world.maxs, MARGIN, LABEL_HEIGHT);
       patternDefs.push(
         `  <pattern id="ti-${p.texinfoIdx}" patternUnits="userSpaceOnUse"` +
         ` width="${tex.width}" height="${tex.height}"` +
@@ -297,7 +296,7 @@ export function generateMapSvg(
     const isAxis = wx === 0;
     gridLines.push(
       `  <line x1="${sx.toFixed(1)}" y1="${gridTop}" x2="${sx.toFixed(1)}" y2="${gridBottom}"` +
-      ` stroke="rgb(0,255,0)" stroke-width="${isAxis ? 1 : 0.5}" opacity="${isAxis ? 0.9 : 0.9}"/>`,
+      ` stroke="rgb(0,255,0)" stroke-width="${isAxis ? 1 : 0.5}" opacity="0.9"/>`,
     );
   }
 
@@ -309,7 +308,7 @@ export function generateMapSvg(
     const isAxis = wy === 0;
     gridLines.push(
       `  <line x1="${gridLeft}" y1="${sy.toFixed(1)}" x2="${gridRight}" y2="${sy.toFixed(1)}"` +
-      ` stroke="rgb(0,255,0)" stroke-width="${isAxis ? 1 : 0.5}" opacity="${isAxis ? 0.9 : 0.9}"/>`,
+      ` stroke="rgb(0,255,0)" stroke-width="${isAxis ? 1 : 0.5}" opacity="0.9"/>`,
     );
   }
 

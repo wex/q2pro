@@ -72,6 +72,9 @@ export class MvdClient extends EventEmitter {
     private reconnectAttempt = 0;
     private suspended = false;
     private destroyed = false;
+    /** True when `connect()` was invoked by the reconnect timer (preserve backoff). */
+    private isAutoReconnect = false;
+    private closeEmitted = false;
 
     private readonly opts: Required<MvdClientOptions>;
 
@@ -106,10 +109,13 @@ export class MvdClient extends EventEmitter {
      * Update the live GTV target. Only allowed while disconnected; ignored
      * otherwise so an in-flight session is not torn mid-stream.
      */
-    setTarget(host: string, port: number): boolean {
+    setTarget(host: string, port: number, password?: string): boolean {
         if (this._state !== ClientState.Disconnected) return false;
         (this.opts as { host: string }).host = host;
         (this.opts as { port: number }).port = port;
+        if (password !== undefined) {
+            (this.opts as { password: string }).password = password;
+        }
         return true;
     }
 
@@ -118,7 +124,12 @@ export class MvdClient extends EventEmitter {
             return;
         }
         this.destroyed = false;
-        this.reconnectAttempt = 0;
+        this.closeEmitted = false;
+        // User-initiated connect resets backoff; auto-reconnect preserves it.
+        if (!this.isAutoReconnect) {
+            this.reconnectAttempt = 0;
+        }
+        this.isAutoReconnect = false;
         this.setState(ClientState.Connecting);
 
         const sock = new net.Socket();
@@ -136,6 +147,7 @@ export class MvdClient extends EventEmitter {
         this.destroyed = true;
         this.cleanup();
         this.setState(ClientState.Disconnected);
+        this.emitClose();
     }
 
     /** Send a string command to the game server (requires GTF_STRINGCMDS) */
@@ -195,11 +207,32 @@ export class MvdClient extends EventEmitter {
         const wasState = this._state;
         this.cleanup();
         this.setState(ClientState.Disconnected);
-        this.emit('close');
+        this.emitClose();
 
         if (!this.destroyed && this.opts.autoReconnect && wasState !== ClientState.Disconnected) {
             this.scheduleReconnect();
         }
+    }
+
+    /**
+     * Tear down the socket without marking the session fatal, so
+     * auto-reconnect can still schedule. Emits `close` once.
+     */
+    private softClose(): void {
+        const wasState = this._state;
+        this.cleanup();
+        this.setState(ClientState.Disconnected);
+        this.emitClose();
+
+        if (!this.destroyed && this.opts.autoReconnect && wasState !== ClientState.Disconnected) {
+            this.scheduleReconnect();
+        }
+    }
+
+    private emitClose(): void {
+        if (this.closeEmitted) return;
+        this.closeEmitted = true;
+        this.emit('close');
     }
 
     // ── Uncompressed receive-buffer processing ──────────────────────
@@ -212,7 +245,7 @@ export class MvdClient extends EventEmitter {
                 const magic = this.recvBuf.subarray(0, 4);
                 if (!magic.equals(MVD_MAGIC)) {
                     this.emit('error', { code: 'BAD_MAGIC', message: 'Server did not echo MVD magic' });
-                    this.disconnect();
+                    this.softClose();
                     return;
                 }
                 this.recvBuf = this.recvBuf.subarray(4);
@@ -243,12 +276,12 @@ export class MvdClient extends EventEmitter {
 
             if (this.pendingMsgLen === 0) {
                 this.emit('disconnect', { reason: 'End of stream' });
-                this.disconnect();
+                this.softClose();
                 return false;
             }
             if (this.pendingMsgLen > MAX_GTS_MSGLEN) {
                 this.emit('error', { code: 'OVERSIZE', message: `Message too large: ${this.pendingMsgLen}` });
-                this.disconnect();
+                this.softClose();
                 return false;
             }
         }
@@ -289,7 +322,7 @@ export class MvdClient extends EventEmitter {
                 break;
             case GtvServerOp.Error:
                 this.emit('error', { code: 'GTS_ERROR', message: 'Server-side error occurred' });
-                this.disconnect();
+                this.softClose();
                 break;
             case GtvServerOp.BadRequest:
                 this.emit('error', { code: 'GTS_BADREQUEST', message: 'Server refused request (bad protocol version)' });
@@ -301,19 +334,20 @@ export class MvdClient extends EventEmitter {
                 break;
             case GtvServerOp.Disconnect:
                 this.emit('disconnect', { reason: 'Server shut down' });
-                this.disconnect();
+                this.softClose();
                 break;
             case GtvServerOp.Reconnect:
                 this.emit('disconnect', { reason: 'Server restarted' });
                 this.cleanup();
                 this.setState(ClientState.Disconnected);
+                this.emitClose();
                 if (this.opts.autoReconnect) {
                     this.scheduleReconnect();
                 }
                 break;
             default:
                 this.emit('error', { code: 'UNKNOWN_OPCODE', message: `Unknown server opcode: ${opcode}` });
-                this.disconnect();
+                this.softClose();
                 break;
         }
     }
@@ -323,23 +357,18 @@ export class MvdClient extends EventEmitter {
     private handleHello(payload: Buffer): void {
         if (payload.length < 4) {
             this.emit('error', { code: 'BAD_HELLO', message: 'Server hello too short' });
-            this.disconnect();
+            this.softClose();
             return;
         }
 
         const reader = new BufferReader(payload);
         this.negotiatedFlags = reader.readInt32LE();
+        this.reconnectAttempt = 0;
 
         this.emit('hello', this.negotiatedFlags);
         this.setState(ClientState.Preparing);
 
-        // Automatically request stream start
-        const w = new BufferWriter();
-        w.writeInt16LE(this.opts.maxBuf);
-        this.sendMessage(GtvClientOp.StreamStart, w.toBuffer());
-        this.setState(ClientState.Ready);
-
-        // Start ping keepalive
+        this.sendStreamStart();
         this.startPingTimer();
     }
 
@@ -451,6 +480,7 @@ export class MvdClient extends EventEmitter {
         this.reconnectAttempt++;
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
+            this.isAutoReconnect = true;
             this.connect();
         }, delay);
     }

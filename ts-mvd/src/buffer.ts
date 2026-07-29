@@ -76,6 +76,14 @@ export class BufferReader {
 
     // Read N bytes as a new Buffer
     readBytes(n: number): Buffer {
+        if (n < 0) {
+            throw new RangeError(`readBytes: negative length ${n}`);
+        }
+        if (n > this.remaining) {
+            throw new RangeError(
+                `readBytes: need ${n} bytes but only ${this.remaining} remaining at offset ${this.offset}`,
+            );
+        }
         const slice = this.buf.subarray(this.offset, this.offset + n);
         this.offset += n;
         return slice;

@@ -16,6 +16,7 @@ Source lives in `ts-mvd/src/`:
 - `protocol.ts` — opcodes, flags, constants (`MvdOp`, `SVCMD_MASK`, GTV hello/flags).
 - `frame.ts` — MVD frame/message parsing (incl. player-edict VWEP `weaponTypeNum`).
 - `player-loadout.ts` — AQ2 weapon/ammo resolution helpers for scoreboard SSE.
+- `combat-fx.ts` — hit / muzzleflash → damage attribution for map overlay FX.
 - `buffer.ts` — bit/byte reader helpers.
 - `bsp.ts` — BSP map loader.
 - `wal.ts` — WAL texture loader.
@@ -53,7 +54,7 @@ Requires Node.js 20+ (matches `@types/node` ^20).
 ## Testing & verification
 The test runner is Jest with `ts-jest`. See `doc/testing.md` for the full guide.
 
-- Suites live in `ts-mvd/test/` matching `*.test.ts`: `buffer.test.ts`, `demo.test.ts`, `frame.test.ts`, `client.test.ts`, `app.test.ts`, `player-loadout.test.ts`.
+- Suites live in `ts-mvd/test/` matching `*.test.ts`: `buffer.test.ts`, `demo.test.ts`, `frame.test.ts`, `client.test.ts`, `app.test.ts`, `player-loadout.test.ts`, `combat-fx.test.ts`, `pak.test.ts`, `bsp.test.ts`.
 - Shared fixtures in `ts-mvd/test/helpers/fixtures.ts` (exports `DEMO_PATH` and a `buildMvd2` synth helper). Replay tests use the bundled `ts-mvd/assets/demos/demo.mvd2` so no live Q2Pro server is needed.
 - Configs:
   - `ts-mvd/jest.config.ts` — `ts-jest` preset, `testEnvironment: node`, `forceExit: true` (the `app` module owns long-lived UDP/HTTP handles).
@@ -90,4 +91,12 @@ The test runner is Jest with `ts-jest`. See `doc/testing.md` for the full guide.
 - `doc/texture-export.md` — texture export tooling.
 - `doc/pak-vfs.md` — pak/pkz asset fallback design.
 - `doc/player-loadout.md` — scoreboard HP/weapon/ammo + stream roster vs sticky.
+- `doc/player-lock.md` — follow-mode lock / viewport clamp.
+- `doc/combat-fx.md` — hit / muzzleflash damage FX.
+- `doc/chat-dedup.md` — chat/obituary print dedup.
+- `doc/texture-toggle.md` — map texture toggle.
+- `doc/player-health-and-death-icon.md` — HP / death icon UI.
+- `doc/ui-team-colours-and-gametime.md` — team colours + gametime.
+- `doc/audit.md` — project audit / fix checklist.
+- `doc/fable-search.md` — research notes.
 - `doc/how-to-use-devin.md` — onboarding + workflow for Devin.

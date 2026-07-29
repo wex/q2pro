@@ -69,10 +69,28 @@ const VIEW_MODEL_TO_TYPE: ReadonlyArray<{ frag: string; typeNum: number }> = [
     { frag: 'grapple/tris', typeNum: 23 },
 ];
 
-/** CS_IMAGES basename → weapon label when VWEP/gunindex are missing. */
+/**
+ * STAT_CLIP_ICON → weapon (ammo-item icons from g_items.c).
+ * a_m4 / a_mag / a_bullets are unambiguous; a_clip and a_shells collapse
+ * Dual→MK23 and HC→M3 (same family as STAT_AMMO_ICON).
+ */
+const CLIP_ICON_WEAPON_LABELS: Readonly<Record<string, string>> = {
+    a_clip: 'MK23',     // pistol magazines (MK23 / Dual)
+    a_mag: 'MP5',
+    a_m4: 'M4',
+    a_shells: 'M3',     // shotgun shells (M3 / HC)
+    a_bullets: 'SSG',   // sniper spare ammo only (not STAT_AMMO_ICON)
+};
+
+/**
+ * STAT_AMMO_ICON → weapon. Weaker: MK23/MP5/M4/Dual/SSG all use a_bullets,
+ * so only map the family icons that are unique enough for scoreboard guess.
+ */
 const AMMO_ICON_WEAPON_LABELS: Readonly<Record<string, string>> = {
-    a_clip: 'MK23',   // pistol magazines (MK23 / Dual share this)
-    a_shells: 'M3',   // shotgun shells (M3 / HC share this)
+    a_clip: 'MK23',
+    a_shells: 'M3',
+    w_knife: 'Knife',
+    a_m61frag: 'G',
 };
 
 export interface WeaponResolveInput {
@@ -109,7 +127,7 @@ export function isScoped(fov: number, sniperIcon: number): boolean {
 
 /**
  * Prefer entity vwep typeNum; else match CS_MODELS[gunindex] path;
- * else map pistol/shotgun ammo icons (a_clip→MK23, a_shells→M3).
+ * else STAT_CLIP_ICON (a_m4/a_mag/…) then STAT_AMMO_ICON family icons.
  * Returns typeNum or undefined if unknown.
  */
 export function resolveWeaponTypeNum(
@@ -151,7 +169,8 @@ export function resolveWeaponLabel(
 
 /**
  * Last-resort weapon guess from clip/ammo HUD icons.
- * Only unambiguous families requested for scoreboard: pistol→MK23, shotgun→M3.
+ * Prefer STAT_CLIP_ICON (ammo-item icons; includes a_m4→M4). STAT_AMMO_ICON
+ * only maps family icons — never a_bullets (shared by several guns).
  */
 export function resolveWeaponLabelFromAmmo(
     input: WeaponResolveInput,
@@ -162,21 +181,24 @@ export function resolveWeaponLabelFromAmmo(
 
     const clipIdx = (stats[Stat.ClipIcon] as number | undefined) ?? 0;
     if (clipIdx > 0) {
-        const label = ammoIconToWeaponLabel(lookupImage(configstrings, clipIdx));
+        const label = iconPathToLabel(lookupImage(configstrings, clipIdx), CLIP_ICON_WEAPON_LABELS);
         if (label) return label;
     }
 
     const ammoIdx = (stats[Stat.AmmoIcon] as number | undefined) ?? 0;
     if (ammoIdx > 0) {
-        return ammoIconToWeaponLabel(lookupImage(configstrings, ammoIdx));
+        return iconPathToLabel(lookupImage(configstrings, ammoIdx), AMMO_ICON_WEAPON_LABELS);
     }
     return undefined;
 }
 
-function ammoIconToWeaponLabel(iconPath: string): string | undefined {
+function iconPathToLabel(
+    iconPath: string,
+    map: Readonly<Record<string, string>>,
+): string | undefined {
     if (!iconPath) return undefined;
     const base = iconPath.replace(/^.*\//, '').toLowerCase();
-    return AMMO_ICON_WEAPON_LABELS[base];
+    return map[base];
 }
 
 export function extractAmmo(stats: ArrayLike<number>, alive: boolean): AmmoStatus | undefined {
