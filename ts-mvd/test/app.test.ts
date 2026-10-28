@@ -498,6 +498,40 @@ describe('HTTP control surface', () => {
         });
     });
 
+    describe('session scoping', () => {
+        test('unknown ?session= id gets a 404 on control routes', async () => {
+            const res = await request(httpServer).get('/state?session=bogus');
+            expect(res.status).toBe(404);
+            expect(res.body.error).toBe('unknown-session');
+        });
+
+        test('/state reports the default session and its mode', async () => {
+            const res = await request(httpServer).get('/state');
+            expect(res.status).toBe(200);
+            expect(res.body.session).toBe('default');
+            expect(res.body.sessions).toContain('default');
+            expect(res.body.mode).toBe('idle');
+        });
+
+        test('SSE frame payloads carry the session id', () => {
+            const w: string[] = [];
+            const fake = new EventEmitter() as any;
+            fake.write = (d: string) => { w.push(d); return true; };
+            fake.writableLength = 0;
+            fake.end = jest.fn();
+            sseClients.add(fake);
+            parser.onFrame!({
+                frameNumber: 1,
+                players: [],
+                teamScores: { team1: 0, team2: 0, team3: 0 },
+                layoutsFlags: 0,
+            });
+            const ev = w.find((x) => x.startsWith('event: frame'));
+            expect(JSON.parse(ev!.split('data: ')[1]).session).toBe('default');
+            sseClients.delete(fake);
+        });
+    });
+
     describe('OOB status reply source check', () => {
         test('accepts a reply from the polled host:port', () => {
             expect(isStatusReplySource({ port: 27910, address: '127.0.0.1' }, '127.0.0.1', 27910)).toBe(true);

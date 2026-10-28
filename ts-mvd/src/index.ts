@@ -33,6 +33,14 @@ export {
     MvdDemoReaderEventMap,
 } from './demo';
 export { Mvd2Writer } from './mvd2-writer';
+export { Session } from './session';
+export type {
+    SessionOptions,
+    StatusData,
+    StatusPlayer,
+    ScoreboardState,
+    SsePlayerPayload,
+} from './session';
 export {
     StatsTracker,
     DEFAULT_ROUND_PATTERNS,
