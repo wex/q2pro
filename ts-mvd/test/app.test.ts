@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import request from 'supertest';
 
@@ -22,6 +23,7 @@ jest.mock('net', () => ({
 import { httpServer, resetAppStateForTests, DEMOS_DIR, parser, getScoreboardForTests, getPlayersForTests, sseClients, sseHeartbeatTick, isStatusReplySource } from '../src/app';
 import { PlayerState } from '../src/frame';
 import { Stat } from '../src/protocol';
+import { buildSynthBsp } from './helpers/fixtures';
 
 function mkPlayer(number: number, frags: number, extras: Partial<PlayerState> = {}): PlayerState {
     const stats = new Int16Array(32);
@@ -394,6 +396,32 @@ describe('HTTP control surface', () => {
         });
         test('accepts any address when host is a hostname (port match only)', () => {
             expect(isStatusReplySource({ port: 27910, address: '10.0.0.9' }, 'gtv.example.com', 27910)).toBe(true);
+        });
+    });
+
+    describe('GET /maps/{name}', () => {
+        const mapsDir = path.resolve(__dirname, '..', 'maps');
+        const mapFile = path.join(mapsDir, 'devin_synth_test.bsp');
+        beforeAll(() => {
+            fs.writeFileSync(mapFile, buildSynthBsp());
+        });
+        afterAll(() => {
+            fs.rmSync(mapFile, { force: true });
+        });
+
+        test('renders a synthetic BSP to SVG', async () => {
+            const res = await request(httpServer).get('/maps/devin_synth_test?notextures');
+            expect(res.status).toBe(200);
+            expect(res.headers['content-type']).toContain('image/svg+xml');
+            // supertest leaves .body as a Buffer for image/* types.
+            const svg = res.body.toString('utf8');
+            expect(svg).toContain('<svg');
+            expect(svg).toContain('devin_synth_test');
+        });
+
+        test('returns 404 for an unknown map', async () => {
+            const res = await request(httpServer).get('/maps/definitely_not_a_map_9f3a?notextures');
+            expect(res.status).toBe(404);
         });
     });
 });
