@@ -243,12 +243,38 @@ client.on('close', () => {
 
 const sseClients = new Set<http.ServerResponse>();
 
+// SSE hygiene: stalled subscribers are dropped once their buffered output
+// exceeds 1 MiB (frame events stream at ~10 Hz and would otherwise pile up
+// unboundedly), and a comment heartbeat keeps proxies and NATs from
+// reaping idle connections while the stream is suspended.
+const SSE_HEARTBEAT_MS = 25_000;
+const SSE_MAX_BUFFERED_BYTES = 1 << 20;
+
+function sseWrite(res: http.ServerResponse, payload: string): void {
+    if (!res.write(payload) && res.writableLength > SSE_MAX_BUFFERED_BYTES) {
+        sseClients.delete(res);
+        res.end();
+    }
+}
+
 function sseBroadcast(event: string, data: unknown): void {
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of sseClients) {
-        res.write(payload);
+        sseWrite(res, payload);
     }
 }
+
+/** One heartbeat round; exported so tests can drive it without timers. */
+export function sseHeartbeatTick(): void {
+    for (const res of sseClients) {
+        sseWrite(res, ':hb\n\n');
+    }
+}
+
+const sseHeartbeat = setInterval(sseHeartbeatTick, SSE_HEARTBEAT_MS);
+// Unref so importing this module (tests, embedders) never keeps the
+// process alive on its own.
+sseHeartbeat.unref();
 
 // Broadcast player state on every frame
 const origOnFrame = parser.onFrame;
@@ -846,6 +872,7 @@ const httpServer = http.createServer((req, res) => {
 
         sseClients.add(res);
         req.on('close', () => sseClients.delete(res));
+        res.on('error', () => sseClients.delete(res));
         return;
     }
 
@@ -908,6 +935,7 @@ export {
     httpServer,
     client,
     parser,
+    sseClients,
     listDemos,
     startReplay,
     stopReplay,
@@ -958,6 +986,7 @@ if (require.main === module) {
     // Graceful shutdown
     process.on('SIGINT', () => {
         console.log('\nDisconnecting...');
+        clearInterval(sseHeartbeat);
         currentReplay?.stop();
         httpServer.close();
         udpSock.close();

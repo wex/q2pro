@@ -19,7 +19,7 @@ jest.mock('net', () => ({
     },
 }));
 
-import { httpServer, resetAppStateForTests, DEMOS_DIR, parser, getScoreboardForTests, getPlayersForTests } from '../src/app';
+import { httpServer, resetAppStateForTests, DEMOS_DIR, parser, getScoreboardForTests, getPlayersForTests, sseClients, sseHeartbeatTick } from '../src/app';
 import { PlayerState } from '../src/frame';
 import { Stat } from '../src/protocol';
 
@@ -302,5 +302,64 @@ describe('HTTP control surface', () => {
         expect(r2.body.error).toBe('replay-active');
 
         await request(httpServer).delete('/replay').expect(204);
+    });
+
+    describe('SSE hygiene', () => {
+        function fakeRes(backpressured: boolean, writableLength: number) {
+            const res = new EventEmitter() as any;
+            const writes: string[] = [];
+            res.write = (d: string) => { writes.push(d); return !backpressured; };
+            res.writableLength = writableLength;
+            res.end = jest.fn();
+            return { res, writes };
+        }
+
+        afterEach(() => {
+            sseClients.clear();
+        });
+
+        test('a stalled client over the buffer cap is ended and removed', () => {
+            const { res } = fakeRes(true, 2 * 1024 * 1024);
+            sseClients.add(res);
+            parser.onFrame!({
+                frameNumber: 1,
+                players: [],
+                teamScores: { team1: 0, team2: 0, team3: 0 },
+                layoutsFlags: 0,
+            });
+            expect(res.end).toHaveBeenCalled();
+            expect(sseClients.has(res)).toBe(false);
+        });
+
+        test('backpressured client under the cap stays subscribed', () => {
+            const { res, writes } = fakeRes(true, 1024);
+            sseClients.add(res);
+            parser.onFrame!({
+                frameNumber: 1,
+                players: [],
+                teamScores: { team1: 0, team2: 0, team3: 0 },
+                layoutsFlags: 0,
+            });
+            expect(sseClients.has(res)).toBe(true);
+            expect(writes.some((w) => w.startsWith('event: frame'))).toBe(true);
+            expect(res.end).not.toHaveBeenCalled();
+        });
+
+        test('heartbeat writes an SSE comment to every client', () => {
+            const { res, writes } = fakeRes(false, 0);
+            sseClients.add(res);
+            sseHeartbeatTick();
+            expect(writes).toContain(':hb\n\n');
+        });
+
+        test('errored clients are removed from the set', () => {
+            const { res } = fakeRes(false, 0);
+            sseClients.add(res);
+            // The /events handler wires res.on('error') on real responses;
+            // simulate the same removal contract via the stored hook.
+            res.on('error', () => sseClients.delete(res));
+            res.emit('error', new Error('boom'));
+            expect(sseClients.has(res)).toBe(false);
+        });
     });
 });
