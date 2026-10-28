@@ -16,12 +16,14 @@ import {
     HitEvent,
     HitTakenEvent,
     LayoutEvent,
+    CenterPrintEvent,
     MuzzleFlashEvent,
     TempEntityEvent,
     TeamScores,
     DeathEvent,
     SoundEvent,
 } from './frame';
+import { StatsTracker } from './stats';
 import { BspFile } from './bsp';
 import { generateMapSvg } from './map-render';
 import { CombatFxResolver } from './combat-fx';
@@ -84,6 +86,34 @@ interface KillEntry extends ObituaryEvent { t: number }
 
 const chatLog: ChatEntry[] = [];
 const killFeed: KillEntry[] = [];
+
+/** clientNum → player name via the playerskin configstrings ("name\skin"). */
+function playerNameFor(num: number): string | undefined {
+    const cs = configstrings.get(csLayout(csExtended).playerskins + num);
+    if (!cs) return undefined;
+    const sep = cs.indexOf('\\');
+    const name = sep === -1 ? '' : cs.substring(0, sep);
+    return name || undefined;
+}
+
+const stats = new StatsTracker({ namer: playerNameFor });
+// Hits arrive per-frame; coalesce stats SSE to one broadcast per window so
+// a busy firefight doesn't emit a snapshot per print.
+let statsTimer: ReturnType<typeof setTimeout> | null = null;
+const STATS_BROADCAST_MS = 2000;
+
+function broadcastStats(): void {
+    sseBroadcast('stats', stats.snapshot());
+}
+
+function scheduleStatsBroadcast(): void {
+    if (statsTimer) return;
+    statsTimer = setTimeout(() => {
+        statsTimer = null;
+        broadcastStats();
+    }, STATS_BROADCAST_MS);
+    statsTimer.unref();
+}
 const scoreboard = {
     teamScores: { team1: 0, team2: 0, team3: 0 } as TeamScores,
     layoutsFlags: 0,
@@ -382,23 +412,38 @@ parser.onObituary = (ev: ObituaryEvent) => {
     const safe = ev.raw.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, '');
     console.log(`[kill] ${safe}`);
     sseBroadcast('kill', entry);
+    stats.noteObituary(ev);
+    broadcastStats();
 };
 
 parser.onHit = (ev: HitEvent) => {
     sseBroadcast('hit', { kind: 'dealt', ...ev });
+    stats.noteHit(ev);
+    scheduleStatsBroadcast();
 };
 
 parser.onHitTaken = (ev: HitTakenEvent) => {
     sseBroadcast('hit', { kind: 'taken', ...ev });
+    stats.noteHitTaken(ev);
+    scheduleStatsBroadcast();
 };
 
 parser.onDeath = (ev: DeathEvent) => {
     sseBroadcast('death', { clientNum: ev.clientNum, origin: ev.origin, t: Date.now() });
+    stats.noteDeath(ev);
+    broadcastStats();
 };
 
 parser.onLayout = (ev: LayoutEvent) => {
     scoreboard.layoutText = ev.text;
     sseBroadcast('layout', ev);
+    if (stats.noteText(ev.text)) broadcastStats();
+};
+
+// Centerprints carry AQ2's round-boundary signals ("FIGHT!" etc.) — feed
+// the stats tracker; no other consumer needs them yet.
+parser.onCenterPrint = (ev: CenterPrintEvent) => {
+    if (stats.noteText(ev.text)) broadcastStats();
 };
 
 // TE_BLOOD / TE_SPARKS / TE_BULLET_SPARKS near a player → damage FX on that
@@ -540,6 +585,11 @@ function resetPipelineState(): void {
     players.clear();
     csExtended = false;
     combatFx.reset();
+    stats.reset();
+    if (statsTimer) {
+        clearTimeout(statsTimer);
+        statsTimer = null;
+    }
     combatFx.notePlayers(players);
     chatLog.length = 0;
     killFeed.length = 0;
@@ -1020,6 +1070,11 @@ const httpServer = http.createServer((req, res) => {
         return;
     }
 
+    if (url.pathname === '/stats' && req.method === 'GET') {
+        sendJson(res, 200, stats.snapshot());
+        return;
+    }
+
     // GET /maps/{mapname}
     const mapMatch = url.pathname.match(/^\/maps\/([\w.-]+)$/);
     if (mapMatch) {
@@ -1071,6 +1126,7 @@ const httpServer = http.createServer((req, res) => {
             killFeed,
             scoreboard,
             replay: replayStatePayload(),
+            stats: stats.snapshot(),
         })}\n\n`);
 
         sseClients.add(res);

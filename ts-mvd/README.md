@@ -100,9 +100,11 @@ curl           http://localhost:8080/demos
 curl           http://localhost:8080/paks
 curl -X POST   'http://localhost:8080/record/start?name=match1'  # → assets/demos/match1.mvd2
 curl -X POST   http://localhost:8080/record/stop
+curl           http://localhost:8080/stats     # per-round K/D / hit locations / weapons
 ```
 
 See `doc/demo-replay.md` for the full endpoint and event reference,
+`doc/session-stats.md` for the `stats` SSE event and round detection,
 `doc/combat-fx.md` for the `flash` / `damage` SSE events used by the
 map overlay FX, and `doc/player-loadout.md` for scoreboard HP / weapon /
 ammo enrichment (stream roster vs sticky loadout).

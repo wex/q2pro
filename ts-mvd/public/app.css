@@ -235,19 +235,23 @@ body {
     color: #b0ffc0;
 }
 
-#scoreboard {
+#scoreboard,
+#stats {
     width: 100%;
     border-collapse: collapse;
 }
 
 #scoreboard th,
-#scoreboard td {
+#scoreboard td,
+#stats th,
+#stats td {
     padding: 2px 4px;
     text-align: left;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-#scoreboard th {
+#scoreboard th,
+#stats th {
     color: #888;
     font-weight: normal;
     font-size: 10px;
@@ -255,7 +259,9 @@ body {
 }
 
 #scoreboard td.num,
-#scoreboard th.num {
+#scoreboard th.num,
+#stats td.num,
+#stats th.num {
     text-align: right;
     font-variant-numeric: tabular-nums;
 }

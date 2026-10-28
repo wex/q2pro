@@ -1,0 +1,63 @@
+# Session stats
+
+Branch: `feat/session-stats`
+
+## Scope
+
+Aggregate per-round match statistics server-side from the event stream the
+parser already produces — no protocol changes. Exposed over HTTP
+(`GET /stats`), SSE (`stats`), and a "Match stats" panel in the browser UI.
+
+## Event sources
+
+| Signal | Feeds |
+|---|---|
+| `onObituary` | kills + weapon attribution (`weapon` template token) |
+| `onDeath` | deaths — the `STAT_HEALTH` → 0 edge is authoritative |
+| `onHit` | hits dealt + body-location tally (`head`/`chest`/`stomach`/`legs`/`body`) |
+| `onHitTaken` | hits received |
+| `onLayout` / `onCenterPrint` text | round-boundary detection |
+
+`StatsTracker` lives in `src/stats.ts` — pure module, injectable clock and
+`namer` callback for testing.
+
+## Caveats (deliberate design limits)
+
+- **Round detection is heuristic.** There is no MVD-level round marker; AQ2
+  signals via centerprint/layout text. `DEFAULT_ROUND_PATTERNS` covers
+  `FIGHT!`, `Round N`, `round begins`, `match start`, `timelimit` — narrow on
+  purpose: a false positive only splits a round, never corrupts data.
+  Streams without boundary text accumulate into a single round. Override via
+  `StatsTrackerOptions.roundPatterns`.
+- **Name resolution lags the roster.** Names resolve through the playerskin
+  configstrings (`"name\skin"` at `csLayout().playerskins + num`) *at event
+  time* — events fired before configstrings populate land under the numeric
+  `clientNum` string and are not retroactively merged.
+- **Kills and deaths can diverge** when `sv_mvd_nostats`/`sv_mvd_nomsgs`
+  strips prints: `onDeath` is a stats edge (always present), obituaries are
+  print-derived (filtered by nomsgs). Weapon attribution additionally needs
+  the kill-feed prints.
+- **`hits` counts hits that landed**, not shots fired — there is no reliable
+  per-shot signal in MVD (muzzleflash covers primary fire only).
+
+## API
+
+```ts
+const stats = new StatsTracker({ namer: playerNameFor });
+parser.onObituary = (ev) => stats.noteObituary(ev);
+parser.onDeath    = (ev) => stats.noteDeath(ev);
+parser.onHit      = (ev) => stats.noteHit(ev);
+parser.onHitTaken = (ev) => stats.noteHitTaken(ev);
+// layout + centerprint text:
+stats.noteText(ev.text); // true ⇒ a new round opened
+stats.snapshot();        // JSON-safe { rounds, totals }
+stats.reset();
+```
+
+- `GET /stats` → the snapshot (`rounds[]` oldest→newest plus `totals`).
+- SSE `stats` — broadcast immediately on obituary/death and coalesced
+  (2 s window) for hit updates so a firefight doesn't emit per-print.
+- The `/events` snapshot payload carries `stats` for initial paint.
+
+Exported from `index.ts`: `StatsTracker`, `StatsTrackerOptions`,
+`StatsSnapshot`, `PlayerRoundStats`, `RoundStats`, `DEFAULT_ROUND_PATTERNS`.

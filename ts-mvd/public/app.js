@@ -23,6 +23,7 @@ const elMap = document.getElementById('status-map');
 const elTime = document.getElementById('status-time');
 const elEntities = document.getElementById('status-entities');
 const elScoreboardBody = document.querySelector('#scoreboard tbody');
+const elStatsBody = document.querySelector('#stats tbody');
 const elTeamScores = document.getElementById('team-scores');
 const elKillfeed = document.getElementById('killfeed');
 const elChat = document.getElementById('chat');
@@ -969,6 +970,25 @@ function renderTeamScores() {
     elTeamScores.innerHTML = html;
 }
 
+/** Match-stats panel fed by the 'stats' SSE snapshot (see doc/session-stats.md). */
+function renderStats(snap) {
+    if (!elStatsBody || !snap || !snap.totals) return;
+    const rows = Object.entries(snap.totals.players || {})
+        .map(([name, p]) => ({ name, ...p }))
+        .sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));
+    elStatsBody.innerHTML = rows.map((p) => {
+        const locs = Object.entries(p.hitsByLocation || {})
+            .sort((a, b) => b[1] - a[1])
+            .map(([loc, n]) => `${loc}:${n}`)
+            .join(' ');
+        return `<tr><td>${escapeHtml(p.name)}</td>`
+            + `<td class="num">${p.kills}</td>`
+            + `<td class="num">${p.deaths}</td>`
+            + `<td class="num">${p.hits}</td>`
+            + `<td>${escapeHtml(locs)}</td></tr>`;
+    }).join('');
+}
+
 function renderScoreboard() {
     renderTeamScores();
 
@@ -1186,6 +1206,7 @@ function connectSSE() {
             replayState = data.replay;
             updateReplayBar();
         }
+        if (data.stats) renderStats(data.stats);
         invalidateConfigCaches();
         updatePlayerCount();
         checkMapChange();
@@ -1313,6 +1334,10 @@ function connectSSE() {
 
     es.addEventListener('sound', (e) => {
         handleSound(JSON.parse(e.data));
+    });
+
+    es.addEventListener('stats', (e) => {
+        renderStats(JSON.parse(e.data));
     });
 
     es.addEventListener('error', () => {

@@ -454,6 +454,50 @@ describe('HTTP control surface', () => {
         });
     });
 
+    describe('GET /stats', () => {
+        test('returns a stats snapshot reflecting parser events', async () => {
+            // Old layout: playerskins base 1312 → "name\skin".
+            parser.onConfigString!({ index: 1312 + 0, value: 'Alice\\male' });
+            parser.onConfigString!({ index: 1312 + 1, value: 'Bob\\male' });
+            parser.onObituary!({ victim: 'Bob', attacker: 'Alice', weapon: 'sniper', raw: 'x' });
+            parser.onDeath!({ clientNum: 1, origin: [0, 0, 0] });
+            parser.onHit!({ attacker: 0, victim: 'Bob', location: 'head', raw: 'x' });
+
+            const res = await request(httpServer).get('/stats');
+            expect(res.status).toBe(200);
+            expect(res.body.rounds).toHaveLength(1);
+            const players = res.body.totals.players;
+            expect(players['Alice'].kills).toBe(1);
+            expect(players['Alice'].weaponsUsed).toEqual({ sniper: 1 });
+            expect(players['Alice'].hitsByLocation).toEqual({ head: 1 });
+            expect(players['Bob'].deaths).toBe(1);
+            expect(res.body.totals.weaponKills).toEqual({ sniper: 1 });
+        });
+
+        test('round boundary text splits rounds', async () => {
+            parser.onObituary!({ victim: 'Bob', attacker: 'Alice', weapon: 'mk23', raw: 'x' });
+            parser.onCenterPrint!({ clientNum: 0, text: 'FIGHT!' });
+            parser.onObituary!({ victim: 'Alice', attacker: 'Bob', weapon: 'mk23', raw: 'x' });
+            const res = await request(httpServer).get('/stats');
+            expect(res.body.rounds).toHaveLength(2);
+        });
+
+        test('stats are broadcast over SSE on kills', () => {
+            const w: string[] = [];
+            const fake = new EventEmitter() as any;
+            fake.write = (d: string) => { w.push(d); return true; };
+            fake.writableLength = 0;
+            fake.end = jest.fn();
+            sseClients.add(fake);
+            parser.onObituary!({ victim: 'Bob', attacker: 'Alice', weapon: 'sniper', raw: 'x' });
+            const ev = w.find((x) => x.startsWith('event: stats'));
+            expect(ev).toBeDefined();
+            const snap = JSON.parse(ev!.split('data: ')[1]);
+            expect(snap.totals.players['Alice'].kills).toBe(1);
+            sseClients.delete(fake);
+        });
+    });
+
     describe('OOB status reply source check', () => {
         test('accepts a reply from the polled host:port', () => {
             expect(isStatusReplySource({ port: 27910, address: '127.0.0.1' }, '127.0.0.1', 27910)).toBe(true);

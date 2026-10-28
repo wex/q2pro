@@ -34,6 +34,16 @@ export {
 } from './demo';
 export { Mvd2Writer } from './mvd2-writer';
 export {
+    StatsTracker,
+    DEFAULT_ROUND_PATTERNS,
+} from './stats';
+export type {
+    StatsTrackerOptions,
+    StatsSnapshot,
+    PlayerRoundStats,
+    RoundStats,
+} from './stats';
+export {
     MvdFrameParser,
     PlayerState,
     FrameEvent,
