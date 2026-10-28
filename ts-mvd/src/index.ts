@@ -32,6 +32,7 @@ export {
     MvdDemoReaderOptions,
     MvdDemoReaderEventMap,
 } from './demo';
+export { Mvd2Writer } from './mvd2-writer';
 export {
     MvdFrameParser,
     PlayerState,

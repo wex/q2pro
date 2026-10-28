@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { MvdClient } from './index';
 import { MvdDemoReader } from './demo';
+import { Mvd2Writer } from './mvd2-writer';
 import { ClientState, Stat } from './protocol';
 import {
     MvdFrameParser,
@@ -53,6 +54,10 @@ const client = new MvdClient({
 // and UDP OOB polling is skipped.
 let currentReplay: MvdDemoReader | null = null;
 let currentReplayFile: string | null = null;
+
+// Live .mvd2 recorder; every streamData/streamResume payload is framed and
+// appended while `recorder.recording` (see doc/live-recording.md).
+const recorder = new Mvd2Writer();
 
 const parser = new MvdFrameParser();
 
@@ -201,6 +206,7 @@ client.on('streamStart', () => {
 });
 
 client.on('streamData', (data) => {
+    recorder.writeMessage(data);
     try {
         parser.parse(data);
     } catch (err) {
@@ -211,6 +217,7 @@ client.on('streamData', (data) => {
 
 client.on('streamResume', (data) => {
     console.log(`[stream] Resumed`);
+    recorder.writeMessage(data);
     try {
         parser.parse(data);
     } catch (err) {
@@ -241,6 +248,11 @@ client.on('disconnect', ({ reason }) => {
 
 client.on('close', () => {
     console.log('[close] Connection closed');
+    const fin = recorder.close();
+    if (fin) {
+        console.log(`[record] Stopped on disconnect (${fin.messages} messages → ${fin.file})`);
+        sseBroadcast('recordStop', { file: path.basename(fin.file), messages: fin.messages, bytes: fin.bytes, reason: 'disconnect' });
+    }
     sseBroadcast('liveStop', {});
 });
 
@@ -836,6 +848,64 @@ const httpServer = http.createServer((req, res) => {
         return;
     }
 
+    // POST /record/start?name=foo — begin writing live stream to a .mvd2
+    // under DEMOS_DIR so the result is immediately replayable via /replay.
+    if (url.pathname === '/record/start' && req.method === 'POST') {
+        const requested = url.searchParams.get('name');
+        let base: string;
+        if (!requested) {
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+            base = `live-${stamp}.mvd2`;
+        } else {
+            // Confine to DEMOS_DIR — same traversal guard as /replay.
+            base = path.basename(requested);
+            if (base !== requested || requested.includes('\0')) {
+                sendJson(res, 400, { error: 'invalid-name' });
+                return;
+            }
+            if (!base.toLowerCase().endsWith('.mvd2')) {
+                base += '.mvd2';
+            }
+        }
+        if (recorder.recording) {
+            sendJson(res, 409, { error: 'already-recording', file: path.basename(recorder.file) });
+            return;
+        }
+        if (client.state !== ClientState.Streaming && client.state !== ClientState.Suspended) {
+            sendJson(res, 409, { error: 'not-streaming', state: client.state });
+            return;
+        }
+        const filePath = path.resolve(DEMOS_DIR, base);
+        if (filePath !== DEMOS_DIR && !filePath.startsWith(DEMOS_DIR + path.sep)) {
+            sendJson(res, 400, { error: 'invalid-name' });
+            return;
+        }
+        try {
+            recorder.open(filePath);
+        } catch (err) {
+            sendJson(res, 500, { error: 'open-failed', message: (err as Error).message });
+            return;
+        }
+        const file = path.basename(filePath);
+        console.log(`[record] Started → ${filePath}`);
+        sseBroadcast('recordStart', { file });
+        sendJson(res, 202, { file });
+        return;
+    }
+
+    if (url.pathname === '/record/stop' && req.method === 'POST') {
+        const fin = recorder.close();
+        if (!fin) {
+            sendJson(res, 404, { error: 'not-recording' });
+            return;
+        }
+        const body = { file: path.basename(fin.file), messages: fin.messages, bytes: fin.bytes };
+        console.log(`[record] Stopped (${fin.messages} messages → ${fin.file})`);
+        sseBroadcast('recordStop', body);
+        sendJson(res, 200, body);
+        return;
+    }
+
     if (url.pathname === '/paks' && req.method === 'GET') {
         sendJson(res, 200, {
             archives: pakIndex.archives,
@@ -854,6 +924,9 @@ const httpServer = http.createServer((req, res) => {
             mode,
             clientState: client.state,
             replayFile: currentReplayFile,
+            recording: recorder.recording
+                ? { file: path.basename(recorder.file), messages: recorder.messages }
+                : null,
         });
         return;
     }
@@ -1003,6 +1076,7 @@ export function resetAppStateForTests(): void {
     if (currentReplay) currentReplay.stop();
     currentReplay = null;
     currentReplayFile = null;
+    recorder.close();
     client.disconnect();
     resetPipelineState();
 }
@@ -1021,6 +1095,8 @@ if (require.main === module) {
         console.log(`[http]   POST /disconnect   — stop live GTV`);
         console.log(`[http]   POST /replay[?file=...] — replay a .mvd2 demo`);
         console.log(`[http]   DEL  /replay       — stop active replay`);
+        console.log(`[http]   POST /record/start?name=x.mvd2 — record live stream to assets/demos/`);
+        console.log(`[http]   POST /record/stop   — finish the active recording`);
     });
 
     // Graceful shutdown

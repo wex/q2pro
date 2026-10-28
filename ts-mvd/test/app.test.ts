@@ -14,16 +14,46 @@ class FakeSocket extends EventEmitter {
     setNoDelay(): void { /* noop */ }
     setKeepAlive(): void { /* noop */ }
 }
+let mockLastSocket: FakeSocket | null = null;
 jest.mock('net', () => ({
     Socket: class {
-        constructor() { return new FakeSocket() as unknown as object; }
+        constructor() { return (mockLastSocket = new FakeSocket()) as unknown as object; }
     },
 }));
 
 import { httpServer, resetAppStateForTests, DEMOS_DIR, parser, getScoreboardForTests, getPlayersForTests, sseClients, sseHeartbeatTick, isStatusReplySource } from '../src/app';
 import { PlayerState } from '../src/frame';
-import { Stat } from '../src/protocol';
+import { Stat, MvdOp, GtvServerOp } from '../src/protocol';
 import { buildSynthBsp } from './helpers/fixtures';
+import { MvdDemoReader } from '../src/demo';
+
+/** Frame a GTV server→client message: [u16 len incl. opcode][opcode][payload]. */
+function srvMsg(opcode: GtvServerOp, payload?: Buffer): Buffer {
+    const len = 1 + (payload?.length ?? 0);
+    const msg = Buffer.allocUnsafe(2 + len);
+    msg.writeUInt16LE(len, 0);
+    msg[2] = opcode;
+    if (payload) payload.copy(msg, 3);
+    return msg;
+}
+
+/**
+ * Drive the singleton client to Streaming through the mocked socket:
+ * TCP connect → magic echo → server hello (flags 0) → stream start ack.
+ */
+async function driveToStreaming(): Promise<FakeSocket> {
+    await request(httpServer)
+        .post('/connect')
+        .set('content-type', 'application/json')
+        .send({ host: '127.0.0.1', port: 27910 });
+    const sock = mockLastSocket!;
+    sock.emit('connect');
+    sock.emit('data', Buffer.from('MVD2', 'ascii'));
+    const flags = Buffer.alloc(4);
+    sock.emit('data', srvMsg(GtvServerOp.Hello, flags));
+    sock.emit('data', srvMsg(GtvServerOp.StreamStart));
+    return sock;
+}
 
 function mkPlayer(number: number, frags: number, extras: Partial<PlayerState> = {}): PlayerState {
     const stats = new Int16Array(32);
@@ -422,6 +452,73 @@ describe('HTTP control surface', () => {
         test('returns 404 for an unknown map', async () => {
             const res = await request(httpServer).get('/maps/definitely_not_a_map_9f3a?notextures');
             expect(res.status).toBe(404);
+        });
+    });
+
+    describe('POST /record/*', () => {
+        const recorded = new Set<string>();
+        afterAll(() => {
+            for (const f of recorded) {
+                fs.rmSync(path.join(DEMOS_DIR, f), { force: true });
+            }
+        });
+
+        test('start without a stream returns 409 not-streaming', async () => {
+            const res = await request(httpServer).post('/record/start');
+            expect(res.status).toBe(409);
+            expect(res.body.error).toBe('not-streaming');
+        });
+
+        test('stop without a recording returns 404', async () => {
+            const res = await request(httpServer).post('/record/stop');
+            expect(res.status).toBe(404);
+            expect(res.body.error).toBe('not-recording');
+        });
+
+        test('start → streamData written → stop → file replays verbatim', async () => {
+            const sock = await driveToStreaming();
+
+            const res = await request(httpServer).post('/record/start?name=devin_test_recording');
+            expect(res.status).toBe(202);
+            expect(res.body.file).toBe('devin_test_recording.mvd2');
+            recorded.add('devin_test_recording.mvd2');
+
+            // Second start while recording → 409.
+            const dup = await request(httpServer).post('/record/start?name=other');
+            expect(dup.status).toBe(409);
+            expect(dup.body.error).toBe('already-recording');
+
+            // Two streamData payloads (plus a suspend marker that must be skipped).
+            const p1 = Buffer.from([MvdOp.Nop]);
+            const p2 = Buffer.from([MvdOp.Print, 1, 0x68, 0x69, 0]);
+            sock.emit('data', srvMsg(GtvServerOp.StreamData, p1));
+            sock.emit('data', srvMsg(GtvServerOp.StreamData)); // suspend marker
+            sock.emit('data', srvMsg(GtvServerOp.StreamData, p2));
+
+            const state = await request(httpServer).get('/state');
+            expect(state.body.recording).toEqual({ file: 'devin_test_recording.mvd2', messages: 2 });
+
+            const stop = await request(httpServer).post('/record/stop');
+            expect(stop.status).toBe(200);
+            expect(stop.body.file).toBe('devin_test_recording.mvd2');
+            expect(stop.body.messages).toBe(2);
+
+            // Verify the file is a valid .mvd2 containing exactly p1 and p2.
+            const got: Buffer[] = await new Promise((resolve, reject) => {
+                const reader = new MvdDemoReader();
+                const acc: Buffer[] = [];
+                reader.on('message', (m) => acc.push(m));
+                reader.on('end', () => resolve(acc));
+                reader.on('error', reject);
+                reader.play(path.join(DEMOS_DIR, 'devin_test_recording.mvd2'));
+            });
+            expect(got).toEqual([p1, p2]);
+        });
+
+        test('traversal name is rejected', async () => {
+            const res = await request(httpServer).post('/record/start?name=../evil');
+            expect(res.status).toBe(400);
+            expect(res.body.error).toBe('invalid-name');
         });
     });
 });

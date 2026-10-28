@@ -98,6 +98,8 @@ curl -X POST   http://localhost:8080/disconnect
 curl           http://localhost:8080/state
 curl           http://localhost:8080/demos
 curl           http://localhost:8080/paks
+curl -X POST   'http://localhost:8080/record/start?name=match1'  # → assets/demos/match1.mvd2
+curl -X POST   http://localhost:8080/record/stop
 ```
 
 See `doc/demo-replay.md` for the full endpoint and event reference,
