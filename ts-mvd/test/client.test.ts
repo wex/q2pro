@@ -236,6 +236,41 @@ describe('MvdClient state machine', () => {
         c.disconnect();
     });
 
+    test('server Reconnect op soft-closes and schedules auto-reconnect', () => {
+        jest.useFakeTimers();
+        const c = new MvdClient({
+            host: 'test.local',
+            port: 27999,
+            autoReconnect: true,
+            reconnectDelay: 100,
+        });
+        created.push(c);
+        const reasons: string[] = [];
+        let closes = 0;
+        c.on('disconnect', (ev) => reasons.push(ev.reason));
+        c.on('close', () => closes++);
+        c.connect();
+        const sock = lastSocket.instance!;
+        sock.emit('connect');
+        sock.emit('data', MVD_MAGIC);
+        sock.emit('data', framedMessage(GtvServerOp.Reconnect, Buffer.alloc(0)));
+
+        expect(reasons).toEqual(['Server restarted']);
+        expect(c.state).toBe(ClientState.Disconnected);
+        expect(closes).toBe(1);
+
+        const before = lastSocket.instance;
+        jest.advanceTimersByTime(100);
+        expect(lastSocket.instance).not.toBe(before); // reconnect dialled
+        jest.useRealTimers();
+    });
+
+    test('sendStreamStart is a no-op while disconnected', () => {
+        const c = make();
+        c.sendStreamStart();
+        expect(c.state).toBe(ClientState.Disconnected);
+    });
+
     test('BadRequest hard-disconnects and does not auto-reconnect', () => {
         jest.useFakeTimers();
         const c = new MvdClient({

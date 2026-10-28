@@ -181,6 +181,13 @@ export class MvdClient extends EventEmitter {
 
     /** Request to (re-)start the stream */
     sendStreamStart(): void {
+        if (
+            this._state !== ClientState.Preparing &&
+            this._state !== ClientState.Streaming &&
+            this._state !== ClientState.Suspended
+        ) {
+            return;
+        }
         const w = new BufferWriter();
         w.writeInt16LE(this.opts.maxBuf);
         this.sendMessage(GtvClientOp.StreamStart, w.toBuffer());
@@ -215,14 +222,7 @@ export class MvdClient extends EventEmitter {
     }
 
     private onTcpClose(): void {
-        const wasState = this._state;
-        this.cleanup();
-        this.setState(ClientState.Disconnected);
-        this.emitClose();
-
-        if (!this.destroyed && this.opts.autoReconnect && wasState !== ClientState.Disconnected) {
-            this.scheduleReconnect();
-        }
+        this.softClose();
     }
 
     /**
@@ -349,12 +349,7 @@ export class MvdClient extends EventEmitter {
                 break;
             case GtvServerOp.Reconnect:
                 this.emit('disconnect', { reason: 'Server restarted' });
-                this.cleanup();
-                this.setState(ClientState.Disconnected);
-                this.emitClose();
-                if (this.opts.autoReconnect) {
-                    this.scheduleReconnect();
-                }
+                this.softClose();
                 break;
             default:
                 this.emitError({ code: 'UNKNOWN_OPCODE', message: `Unknown server opcode: ${opcode}` });
