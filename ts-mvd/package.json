@@ -8,7 +8,8 @@
     "build": "tsc",
     "app": "ts-node src/app.ts",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "typecheck:browser": "tsc -p tsconfig.browser.json"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

@@ -1,37 +1,42 @@
+// @ts-check
 'use strict';
+
+// CS_* configstring layout constants come from consts.js (loaded first in
+// index.html); the values are verified against src/player-loadout.ts by
+// test/browser-consts.test.ts.
 
 const SSE_URL = '/events';
 const MAP_URL = '/maps/';
 
-const mapCanvas = document.getElementById('map');
-const playersCanvas = document.getElementById('players');
-const mapCtx = mapCanvas.getContext('2d');
-const playersCtx = playersCanvas.getContext('2d');
-const elConn = document.getElementById('status-conn');
-const elStop = document.getElementById('status-stop');
-const elModal = document.getElementById('session-modal');
-const elConnectForm = document.getElementById('connect-form');
-const elReplayForm = document.getElementById('replay-form');
-const elConnectHost = document.getElementById('connect-host');
-const elConnectPort = document.getElementById('connect-port');
-const elConnectPassword = document.getElementById('connect-password');
-const elDemoSelect = document.getElementById('demo-select');
-const elSessionError = document.getElementById('session-error');
-const elTabs = document.querySelectorAll('#session-modal .tab');
-const elTabPanels = document.querySelectorAll('#session-modal .tab-panel');
-const elMap = document.getElementById('status-map');
-const elTime = document.getElementById('status-time');
-const elEntities = document.getElementById('status-entities');
-const elScoreboardBody = document.querySelector('#scoreboard tbody');
-const elStatsBody = document.querySelector('#stats tbody');
-const elTeamScores = document.getElementById('team-scores');
-const elKillfeed = document.getElementById('killfeed');
-const elChat = document.getElementById('chat');
-const elBtnTextures = document.getElementById('btn-textures');
-const elPanel = document.getElementById('panel');
-const elReplayPause = document.getElementById('replay-pause');
-const elReplaySeek = document.getElementById('replay-seek');
-const elReplaySpeed = document.getElementById('replay-speed');
+const mapCanvas = /** @type {HTMLCanvasElement} */ (document.getElementById('map'));
+const playersCanvas = /** @type {HTMLCanvasElement} */ (document.getElementById('players'));
+const mapCtx = /** @type {CanvasRenderingContext2D} */ (mapCanvas.getContext('2d'));
+const playersCtx = /** @type {CanvasRenderingContext2D} */ (playersCanvas.getContext('2d'));
+const elConn = /** @type {HTMLElement} */ (document.getElementById('status-conn'));
+const elStop = /** @type {HTMLElement} */ (document.getElementById('status-stop'));
+const elModal = /** @type {HTMLElement} */ (document.getElementById('session-modal'));
+const elConnectForm = /** @type {HTMLFormElement} */ (document.getElementById('connect-form'));
+const elReplayForm = /** @type {HTMLFormElement} */ (document.getElementById('replay-form'));
+const elConnectHost = /** @type {HTMLInputElement} */ (document.getElementById('connect-host'));
+const elConnectPort = /** @type {HTMLInputElement} */ (document.getElementById('connect-port'));
+const elConnectPassword = /** @type {HTMLInputElement} */ (document.getElementById('connect-password'));
+const elDemoSelect = /** @type {HTMLSelectElement} */ (document.getElementById('demo-select'));
+const elSessionError = /** @type {HTMLElement} */ (document.getElementById('session-error'));
+const elTabs = /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('#session-modal .tab'));
+const elTabPanels = /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('#session-modal .tab-panel'));
+const elMap = /** @type {HTMLElement} */ (document.getElementById('status-map'));
+const elTime = /** @type {HTMLElement} */ (document.getElementById('status-time'));
+const elEntities = /** @type {HTMLElement} */ (document.getElementById('status-entities'));
+const elScoreboardBody = /** @type {HTMLElement} */ (document.querySelector('#scoreboard tbody'));
+const elStatsBody = /** @type {HTMLElement} */ (document.querySelector('#stats tbody'));
+const elTeamScores = /** @type {HTMLElement} */ (document.getElementById('team-scores'));
+const elKillfeed = /** @type {HTMLElement} */ (document.getElementById('killfeed'));
+const elChat = /** @type {HTMLElement} */ (document.getElementById('chat'));
+const elBtnTextures = /** @type {HTMLButtonElement} */ (document.getElementById('btn-textures'));
+const elPanel = /** @type {HTMLElement} */ (document.getElementById('panel'));
+const elReplayPause = /** @type {HTMLButtonElement} */ (document.getElementById('replay-pause'));
+const elReplaySeek = /** @type {HTMLInputElement} */ (document.getElementById('replay-seek'));
+const elReplaySpeed = /** @type {HTMLSelectElement} */ (document.getElementById('replay-speed'));
 
 let texturesEnabled = true;      // toggled by Tex button / T hotkey
 let lockedPlayerNum = null;      // null = free camera; integer = locked client slot
@@ -62,14 +67,7 @@ const csB = () => (csExtended
     ? { models: CS_MODELS_EXT, playerskins: CS_PLAYERSKINS_EXT, maxclients: CS_MAXCLIENTS_EXT }
     : { models: CS_MODELS_OLD, playerskins: CS_PLAYERSKINS_OLD, maxclients: CS_MAXCLIENTS_OLD });
 
-// ─── Configstring constants / colours ────────────────────────────────────────
-
-const CS_MAXCLIENTS_OLD = 30;
-const CS_MAXCLIENTS_EXT = 60;
-const CS_MODELS_OLD = 32;
-const CS_MODELS_EXT = 62;
-const CS_PLAYERSKINS_OLD = 1312;
-const CS_PLAYERSKINS_EXT = 12862;
+// ─── Configstring layout / colours ───────────────────────────────────────────
 
 const TEAM_COLOURS = [
     { fill: 'rgba(220, 30, 30, 0.85)', stroke: 'rgba(255, 160, 160, 0.9)', cone: 'rgba(220, 30, 30, 0.3)', coneStroke: 'rgba(220, 30, 30, 0.6)' },
@@ -1102,15 +1100,15 @@ function updateGametime(frameNumber) {
 }
 
 elScoreboardBody.addEventListener('mousedown', (e) => {
-    const row = e.target.closest('tr[data-num]');
+    const row = /** @type {HTMLElement} */ (e.target).closest('tr[data-num]');
     if (!row) return;
-    const num = parseInt(row.dataset.num, 10);
+    const num = parseInt(/** @type {HTMLElement} */ (row).dataset.num || '', 10);
     setLock(lockedPlayerNum === num ? null : num);
     scheduleRender(MAP_DIRTY | PLAYERS_DIRTY);
 });
 
 function flashScoreboardRow(num, cls) {
-    const row = elScoreboardBody.querySelector(`tr[data-num="${num}"]`);
+    const row = /** @type {HTMLElement | null} */ (elScoreboardBody.querySelector(`tr[data-num="${num}"]`));
     if (!row) return;
     row.classList.remove(cls);
     // Force reflow to restart the animation.
@@ -1464,10 +1462,10 @@ function setMode(mode) {
 function updateReplayBar() {
     if (!replayState || currentMode !== 'replay') return;
     elReplayPause.textContent = replayState.paused ? 'Resume' : 'Pause';
-    elReplaySeek.max = Math.max(0, (replayState.messageCount || 0) - 1);
+    elReplaySeek.max = String(Math.max(0, (replayState.messageCount || 0) - 1));
     // Don't fight the user mid-drag — only sync the slider while unfocused.
     if (document.activeElement !== elReplaySeek) {
-        elReplaySeek.value = replayState.position || 0;
+        elReplaySeek.value = String(replayState.position || 0);
     }
     const want = String(replayState.speed ?? 1);
     if (elReplaySpeed.value !== want) {
@@ -1533,7 +1531,7 @@ async function loadDemos() {
             opt.textContent = '(no demos found)';
             opt.disabled = true;
             elDemoSelect.appendChild(opt);
-            elReplayForm.querySelector('button[type="submit"]').disabled = true;
+            /** @type {HTMLButtonElement} */ (elReplayForm.querySelector('button[type="submit"]')).disabled = true;
         } else {
             for (const name of demos) {
                 const opt = document.createElement('option');
@@ -1541,7 +1539,7 @@ async function loadDemos() {
                 opt.textContent = name;
                 elDemoSelect.appendChild(opt);
             }
-            elReplayForm.querySelector('button[type="submit"]').disabled = false;
+            /** @type {HTMLButtonElement} */ (elReplayForm.querySelector('button[type="submit"]')).disabled = false;
         }
     } catch (err) {
         showSessionError(`Failed to load demo list: ${err.message}`);
@@ -1560,7 +1558,7 @@ elTabs.forEach((btn) => {
 elConnectForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     clearSessionError();
-    const submitBtn = elConnectForm.querySelector('button[type="submit"]');
+    const submitBtn = /** @type {HTMLButtonElement} */ (elConnectForm.querySelector('button[type="submit"]'));
     submitBtn.disabled = true;
     try {
         const host = elConnectHost.value.trim();
@@ -1587,7 +1585,7 @@ elConnectForm.addEventListener('submit', async (e) => {
 elReplayForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     clearSessionError();
-    const submitBtn = elReplayForm.querySelector('button[type="submit"]');
+    const submitBtn = /** @type {HTMLButtonElement} */ (elReplayForm.querySelector('button[type="submit"]'));
     submitBtn.disabled = true;
     try {
         const file = elDemoSelect.value;
