@@ -1,5 +1,10 @@
 # ts-mvd project audit
 
+> Superseded by `/AUDIT.md` (2026-10-28): its confirmed bugs 1–2 and
+> robustness findings 3–5 are FIXED on the `fix/cs-layout-selection`,
+> `fix/inner-svc-ops`, `fix/error-event-guard`, `fix/client-close-dedup`
+> and `fix/sse-hygiene` branches.
+
 Date: 2026-07-29.
 Scope: everything under `ts-mvd/` (source, tests, configs, browser client, docs that describe them).
 Method: full source read-through, cross-check of protocol constants against the C reference in

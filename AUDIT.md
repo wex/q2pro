@@ -25,7 +25,7 @@ re-verified as fixed.
 
 ## Confirmed bugs
 
-### 1. Configstring layout "try EXT then OLD" is wrong on vanilla-layout streams
+### 1. Configstring layout "try EXT then OLD" is wrong on vanilla-layout streams — FIXED (fix/cs-layout-selection)
 Files: `src/player-loadout.ts` (`lookupModel`), `src/app.ts` (`parser.onConfigString`
 disconnect pruning), `public/app.js` (`recomputeMaxclients`).
 
@@ -52,7 +52,7 @@ Fix: `MvdFrameParser` already computes `this.extended`; expose it on `ServerData
 `CS_ITEMS_EXT` / `CS_IMAGES_EXT` / `CS_PLAYERSKINS_EXT` are > 2080 so they are safe today, but
 the same explicit selection should be applied for consistency.
 
-### 2. `svc_sound` inside unicast/multicast payloads aborts the inner walk
+### 2. `svc_sound` inside unicast/multicast payloads aborts the inner walk — FIXED (fix/inner-svc-ops)
 File: `src/frame.ts` (`parseInnerSvcMessages` default branch).
 
 7 × `unknown_svc_op opcode: 9` warnings in the 42-second demo. The parser stops walking the
@@ -64,15 +64,16 @@ Add a `skipInnerSound()` mirroring `skipSound()`.
 
 ## Robustness / design
 
-3. **Unhandled `'error'` emitter semantics — `src/client.ts`.** `MvdClient` emits `'error'` on
-   a Node `EventEmitter`; a library consumer who does not subscribe gets a process crash on a
-   TCP error. Document in README or rename to a non-special event name.
-4. **Duplicate code — `src/client.ts`.** `onTcpClose()` and `softClose()` are byte-identical;
-   the `GtvServerOp.Reconnect` branch re-implements the same sequence minus the `destroyed`
-   check.
-5. **SSE write hygiene — `src/app.ts`.** `sseBroadcast` ignores `res.write()`'s return value; a
-   stalled browser tab accumulates unbounded buffered frames at 10 Hz. No heartbeat comment, so
-   proxies may reap idle connections during `SUSPENDED`. (Open since previous audit.)
+3. **Unhandled `'error'` emitter semantics — `src/client.ts` — FIXED (fix/error-event-guard).**
+   `MvdClient` emits `'error'` on a Node `EventEmitter`; a library consumer who does not
+   subscribe gets a process crash on a TCP error. `emitError()` now emits only when a listener
+   is attached (README updated).
+4. **Duplicate code — `src/client.ts` — FIXED (fix/client-close-dedup).** `onTcpClose()`
+   delegates to `softClose()`; the `GtvServerOp.Reconnect` branch reuses it too, and
+   `sendStreamStart()` no longer forces a bogus `Ready` state while disconnected.
+5. **SSE write hygiene — `src/app.ts` — FIXED (fix/sse-hygiene).** `sseWrite()` ends clients
+   buffered past 1 MiB, a 25 s unref'd heartbeat emits `:hb` comments, and `error` removes
+   clients from the set.
 6. **Network exposure — `src/app.ts`.** `httpServer.listen(HTTP_PORT)` binds all interfaces
    with no auth; `POST /connect` makes the server open TCP to any host:port and
    `sendOOBStatus` sends UDP there. Default to `127.0.0.1` with an `HTTP_HOST` override. UDP
@@ -122,9 +123,9 @@ Add a `skipInnerSound()` mirroring `skipSound()`.
 
 ## Prioritized TODO
 
-1. Fix bug 1 (expose layout from parser; single base-set lookup in app/loadout/app.js) + tests.
-2. Fix bug 2 (`skipInnerSound`) + test.
-3. Deduplicate `onTcpClose` / `softClose` / `Reconnect` in `client.ts`.
-4. SSE backpressure + heartbeat; bind HTTP to localhost by default.
-5. Map-pipeline tests (`wal` / `map-render` / `/maps`).
-6. Features 1, 2, 6 (small); 4, 5, 7 (larger).
+1. ~~Fix bug 1 (expose layout from parser; single base-set lookup in app/loadout/app.js) + tests~~ done.
+2. ~~Fix bug 2 (`skipInnerSound`) + test~~ done (also inner `svc_configstring`).
+3. ~~Deduplicate `onTcpClose` / `softClose` / `Reconnect` in `client.ts`~~ done.
+4. ~~SSE backpressure + heartbeat~~ done; bind HTTP to localhost by default — open.
+5. Map-pipeline tests (`wal` / `map-render` / `/maps`) — open follow-up.
+6. Features 1, 2, 6 (small); 4, 5, 7 (larger) — open.
