@@ -42,8 +42,9 @@ jest.mock('net', () => {
 });
 
 // Import after the mock is in place.
+import * as zlib from 'node:zlib';
 import { MvdClient } from '../src/client';
-import { ClientState, MVD_MAGIC, GtvServerOp, GTV_PROTOCOL_VERSION } from '../src/protocol';
+import { ClientState, MVD_MAGIC, GtvServerOp, GtvClientOp, GTV_PROTOCOL_VERSION, GTF_DEFLATE } from '../src/protocol';
 import { BufferWriter } from '../src/buffer';
 
 function makeClient() {
@@ -61,6 +62,24 @@ function framedMessage(op: GtvServerOp, payload: Buffer): Buffer {
     const len = Buffer.alloc(2);
     len.writeUInt16LE(body.length);
     return Buffer.concat([len, body]);
+}
+
+function helloFrame(flags: number): Buffer {
+    const w = new BufferWriter();
+    w.writeInt32LE(flags);
+    return framedMessage(GtvServerOp.Hello, w.toBuffer());
+}
+
+/** Flags dword inside the client's own GTC_HELLO payload write. */
+function clientHelloFlags(sock: FakeSocket): number {
+    const idx = sock.writes.findIndex((w) => w.length === 3 && w[2] === GtvClientOp.Hello);
+    const payload = sock.writes[idx + 1];
+    return payload.readInt32LE(2);
+}
+
+/** Yield until pending zlib output has been pushed through the stream. */
+function tick(): Promise<void> {
+    return new Promise((r) => setImmediate(r));
 }
 
 describe('MvdClient state machine', () => {
@@ -298,5 +317,109 @@ describe('MvdClient state machine', () => {
         // Sanity: ensures we didn't break the exported constant surface the
         // tests rely on.
         expect(typeof GTV_PROTOCOL_VERSION).toBe('number');
+    });
+});
+
+describe('GTF_DEFLATE stream compression', () => {
+    const created: MvdClient[] = [];
+    function make(opts: { deflate?: boolean } = {}) {
+        const c = new MvdClient({
+            host: 'test.local',
+            port: 27999,
+            autoReconnect: false,
+            ...opts,
+        });
+        created.push(c);
+        return c;
+    }
+
+    afterEach(() => {
+        for (const c of created) c.disconnect();
+        created.length = 0;
+        lastSocket.instance = null;
+    });
+
+    test('client requests GTF_DEFLATE by default, opts out cleanly', () => {
+        const c = make();
+        c.connect();
+        const sock = lastSocket.instance!;
+        sock.emit('connect');
+        sock.emit('data', MVD_MAGIC);
+        expect(clientHelloFlags(sock) & GTF_DEFLATE).toBeTruthy();
+
+        const c2 = make({ deflate: false });
+        c2.connect();
+        const sock2 = lastSocket.instance!;
+        sock2.emit('connect');
+        sock2.emit('data', MVD_MAGIC);
+        expect(clientHelloFlags(sock2) & GTF_DEFLATE).toBeFalsy();
+    });
+
+    test('deflated messages are inflated and parsed after GTS_HELLO grants it', async () => {
+        const c = make();
+        const data: Buffer[] = [];
+        const helloFlags: number[] = [];
+        c.on('hello', (f) => helloFlags.push(f));
+        c.on('streamData', (d) => data.push(Buffer.from(d)));
+        c.connect();
+        const sock = lastSocket.instance!;
+        sock.emit('connect');
+        sock.emit('data', MVD_MAGIC);
+        sock.emit('data', helloFrame(GTF_DEFLATE));
+        expect(helloFlags).toEqual([GTF_DEFLATE]);
+
+        // Everything after GTS_HELLO is compressed — length headers included.
+        const framed = framedMessage(GtvServerOp.StreamData, Buffer.from([0xaa, 0xbb]));
+        sock.emit('data', zlib.deflateSync(framed));
+        await tick();
+        await tick();
+        expect(data).toEqual([Buffer.from([0xaa, 0xbb])]);
+    });
+
+    test('compressed tail sharing a segment with GTS_HELLO still inflates', async () => {
+        const c = make();
+        const data: Buffer[] = [];
+        c.on('streamData', (d) => data.push(Buffer.from(d)));
+        c.connect();
+        const sock = lastSocket.instance!;
+        sock.emit('connect');
+        sock.emit('data', MVD_MAGIC);
+        // GTS_HELLO and the first compressed chunk arrive in one TCP segment —
+        // the tail bytes belong to the zlib stream, not the raw FIFO.
+        const framed = framedMessage(GtvServerOp.StreamData, Buffer.from([7]));
+        sock.emit('data', Buffer.concat([helloFrame(GTF_DEFLATE), zlib.deflateSync(framed)]));
+        await tick();
+        await tick();
+        expect(data).toEqual([Buffer.from([7])]);
+    });
+
+    test('hello without GTF_DEFLATE keeps the raw path', () => {
+        const c = make();
+        const data: Buffer[] = [];
+        c.on('streamData', (d) => data.push(Buffer.from(d)));
+        c.connect();
+        const sock = lastSocket.instance!;
+        sock.emit('connect');
+        sock.emit('data', MVD_MAGIC);
+        sock.emit('data', helloFrame(0)); // server declined compression
+        sock.emit('data', framedMessage(GtvServerOp.StreamData, Buffer.from([5])));
+        expect(data).toEqual([Buffer.from([5])]);
+    });
+
+    test('corrupt compressed data surfaces an INFLATE error and disconnects', async () => {
+        const c = make();
+        const errors: Array<{ code: string }> = [];
+        c.on('error', (e) => errors.push(e));
+        c.connect();
+        const sock = lastSocket.instance!;
+        sock.emit('connect');
+        sock.emit('data', MVD_MAGIC);
+        sock.emit('data', helloFrame(GTF_DEFLATE));
+        sock.emit('data', Buffer.from([0xde, 0xad, 0xbe, 0xef]));
+        // zlib reports "incorrect header check" via an async write — allow
+        // the worker callback to land.
+        await new Promise((r) => setTimeout(r, 30));
+        expect(errors.some((e) => e.code === 'INFLATE')).toBe(true);
+        expect(c.state).toBe(ClientState.Disconnected);
     });
 });

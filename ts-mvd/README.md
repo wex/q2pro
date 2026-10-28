@@ -184,13 +184,16 @@ DISCONNECTED → CONNECTING → CONNECTED → PREPARING → READY → STREAMING
 | `password` | `string` | `''` | GTV password |
 | `version` | `string` | `'ts-mvd/1.0'` | Client version string |
 | `stringCmds` | `boolean` | `true` | Request command forwarding |
+| `deflate` | `boolean` | `true` | Request zlib stream compression (`GTF_DEFLATE`) |
 | `maxBuf` | `number` | `25` | Server-side buffer size hint |
 | `pingInterval` | `number` | `60000` | Keepalive interval (ms) |
 | `autoReconnect` | `boolean` | `false` | Auto-reconnect on drop / recoverable errors |
 | `reconnectDelay` | `number` | `5000` | Initial reconnect delay (ms) |
 | `reconnectMaxDelay` | `number` | `300000` | Max reconnect delay (ms) |
 
-`GTF_DEFLATE` is not requested; zlib stream compression is not implemented.
+When the server grants `GTF_DEFLATE`, all inbound bytes after `GTS_HELLO`
+(length headers included) inflate through zlib — transparent to consumers;
+check `client.flags & GTF_DEFLATE` for the negotiated state.
 
 ### Methods
 

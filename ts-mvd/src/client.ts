@@ -1,4 +1,5 @@
 import * as net from 'net';
+import * as zlib from 'zlib';
 import { EventEmitter } from 'events';
 import { BufferReader, BufferWriter } from './buffer';
 import {
@@ -6,6 +7,7 @@ import {
     GTV_PROTOCOL_VERSION,
     MAX_GTS_MSGLEN,
     GTF_STRINGCMDS,
+    GTF_DEFLATE,
     GtvServerOp,
     GtvClientOp,
     ClientState,
@@ -38,6 +40,10 @@ export interface MvdClientOptions {
     version?: string;
     /** Request string command forwarding (default: true) */
     stringCmds?: boolean;
+    /** Request zlib stream compression, GTF_DEFLATE (default: true). The
+     *  server silently drops the flag when built without zlib, so leaving
+     *  this on is safe against any peer. */
+    deflate?: boolean;
     /** Max frames to buffer on server side (default: 25) */
     maxBuf?: number;
     /** Ping interval in ms (default: 60000) */
@@ -75,6 +81,9 @@ export class MvdClient extends EventEmitter {
     /** True when `connect()` was invoked by the reconnect timer (preserve backoff). */
     private isAutoReconnect = false;
     private closeEmitted = false;
+    /** Inbound inflater — active once the server grants GTF_DEFLATE. */
+    private inflater: zlib.Inflate | null = null;
+    private zActive = false;
 
     private readonly opts: Required<MvdClientOptions>;
 
@@ -87,6 +96,7 @@ export class MvdClient extends EventEmitter {
             password: options.password ?? '',
             version: options.version ?? 'ts-mvd/1.0',
             stringCmds: options.stringCmds ?? true,
+            deflate: options.deflate ?? true,
             maxBuf: options.maxBuf ?? 25,
             pingInterval: options.pingInterval ?? 60_000,
             reconnectDelay: options.reconnectDelay ?? 5_000,
@@ -202,6 +212,10 @@ export class MvdClient extends EventEmitter {
     }
 
     private onTcpData(chunk: Buffer): void {
+        if (this.zActive && this.inflater) {
+            this.inflater.write(chunk);
+            return;
+        }
         this.recvBuf = Buffer.concat([this.recvBuf, chunk]);
         this.drainRecvBuf();
     }
@@ -371,11 +385,50 @@ export class MvdClient extends EventEmitter {
         this.negotiatedFlags = reader.readInt32LE();
         this.reconnectAttempt = 0;
 
+        // Everything after GTS_HELLO is zlib-compressed when the server
+        // grants GTF_DEFLATE — including the u16 length headers (server
+        // deflateInit right after writing its hello; src/server/mvd.c).
+        if (this.negotiatedFlags & GTF_DEFLATE) {
+            this.startInflate();
+        }
+
         this.emit('hello', this.negotiatedFlags);
         this.setState(ClientState.Preparing);
 
         this.sendStreamStart();
         this.startPingTimer();
+    }
+
+    /**
+     * Mirror of the C client's `z_act` path (src/server/mvd/client.c
+     * `inflate_more`): inbound bytes inflate into the same framed-message
+     * FIFO. On Z_STREAM_END (the server finishes the stream with Z_FINISH
+     * on drop) the connection reverts to plaintext for its remainder.
+     */
+    private startInflate(): void {
+        if (this.inflater) return;
+        const inf = zlib.createInflate();
+        this.inflater = inf;
+        this.zActive = true;
+        inf.on('data', (out: Buffer) => {
+            this.recvBuf = Buffer.concat([this.recvBuf, out]);
+            this.drainRecvBuf();
+        });
+        inf.on('end', () => {
+            this.zActive = false;
+        });
+        inf.on('error', (err: Error) => {
+            this.emitError({ code: 'INFLATE', message: `inflate() failed: ${err.message}` });
+            this.softClose();
+        });
+        // Bytes that shared a TCP segment with the plaintext GTS_HELLO
+        // belong to the compressed stream — hand them to zlib now so they
+        // are not parsed raw.
+        if (this.recvBuf.length) {
+            const tail = this.recvBuf;
+            this.recvBuf = Buffer.alloc(0);
+            inf.write(tail);
+        }
     }
 
     private handleStreamStart(): void {
@@ -417,6 +470,7 @@ export class MvdClient extends EventEmitter {
     private sendHello(): void {
         let flags = 0;
         if (this.opts.stringCmds) flags |= GTF_STRINGCMDS;
+        if (this.opts.deflate) flags |= GTF_DEFLATE;
 
         const w = new BufferWriter();
         w.writeUInt16LE(GTV_PROTOCOL_VERSION);
@@ -506,6 +560,13 @@ export class MvdClient extends EventEmitter {
             this.socket.destroy();
             this.socket = null;
         }
+
+        if (this.inflater) {
+            this.inflater.removeAllListeners();
+            this.inflater.destroy();
+            this.inflater = null;
+        }
+        this.zActive = false;
 
         this.recvBuf = Buffer.alloc(0);
         this.pendingMsgLen = 0;
