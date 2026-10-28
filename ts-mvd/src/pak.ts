@@ -82,9 +82,15 @@ export class PakIndex {
         if (!handle) {
             throw new Error(`pak archive handle missing: ${entry.archive}`);
         }
+        if (entry.offset < 0 || entry.offset + entry.compressedSize > handle.size) {
+            throw new Error(`pak entry out of bounds: ${name} in ${entry.archive}`);
+        }
         const compressed = Buffer.alloc(entry.compressedSize);
         if (entry.compressedSize > 0) {
-            fs.readSync(handle.fd, compressed, 0, entry.compressedSize, entry.offset);
+            const n = fs.readSync(handle.fd, compressed, 0, entry.compressedSize, entry.offset);
+            if (n !== entry.compressedSize) {
+                throw new Error(`short read on pak entry: ${name} in ${entry.archive}`);
+            }
         }
         if (entry.method === 0) return compressed;
         if (entry.method === 8) return zlib.inflateRawSync(compressed);

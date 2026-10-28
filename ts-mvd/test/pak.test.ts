@@ -172,6 +172,17 @@ describe('PakIndex', () => {
         idx.close();
     });
 
+    test('read() throws when an entry points past the archive end', () => {
+        const pak = buildPak([{ name: 'ok.dat', data: Buffer.from('ok') }]);
+        // Corrupt the single dir entry's filepos (last 64 bytes, field at +56).
+        pak.writeUInt32LE(0xfffff000, pak.length - 64 + 56);
+        fs.writeFileSync(path.join(tmpDir, 'bad.pak'), pak);
+
+        const idx = PakIndex.load(tmpDir);
+        expect(() => idx.read('ok.dat')).toThrow(/out of bounds/);
+        idx.close();
+    });
+
     test('skips directory entries in ZIP', () => {
         // Manually craft a zip with a dir entry; reuse buildZip then nothing,
         // simpler: ensure a name ending in / is ignored.

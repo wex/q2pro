@@ -61,13 +61,14 @@ export class BufferReader {
         return v;
     }
 
-    // Read a null-terminated string
+    // Read a null-terminated string. latin1 decodes bytes 1:1 (Q2 uses the
+    // high bit for coloured text); display paths strip non-printables later.
     readString(): string {
         const start = this.offset;
         while (this.offset < this.buf.length && this.buf[this.offset] !== 0) {
             this.offset++;
         }
-        const str = this.buf.toString('ascii', start, this.offset);
+        const str = this.buf.toString('latin1', start, this.offset);
         if (this.offset < this.buf.length) {
             this.offset++; // skip null terminator
         }
@@ -135,10 +136,11 @@ export class BufferWriter {
         return this;
     }
 
-    // Write a null-terminated string
+    // Write a null-terminated string (latin1: each char's low byte, so
+    // high-bit Q2 characters survive the round trip).
     writeString(s: string): this {
         const b = Buffer.alloc(s.length + 1);
-        b.write(s, 'ascii');
+        b.write(s, 'latin1');
         // last byte is already 0 from alloc
         this.parts.push(b);
         this.totalLength += b.length;

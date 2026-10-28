@@ -30,6 +30,20 @@ describe('BufferWriter / BufferReader', () => {
         expect(r.readString()).toBe('world');
     });
 
+    test('writeString / readString round-trips latin1 high-bit bytes', () => {
+        const w = new BufferWriter();
+        w.writeString('äöü');
+        const buf = w.toBuffer();
+        expect(buf[0]).toBe(0xe4); // 'ä' as latin1
+        const r = new BufferReader(buf);
+        expect(r.readString()).toBe('äöü');
+    });
+
+    test('readString preserves high-bit bytes instead of masking to ascii', () => {
+        const r = new BufferReader(Buffer.from([0x6e, 0xe4, 0x63, 0x6b, 0x00])); // "näck"
+        expect(r.readString()).toBe('näck');
+    });
+
     test('readString returns "" at EOF without a null terminator', () => {
         const r = new BufferReader(Buffer.alloc(0));
         expect(r.readString()).toBe('');

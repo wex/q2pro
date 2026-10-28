@@ -161,9 +161,13 @@ parser.onServerData = (ev) => {
     }
 };
 
+// Per-update configstring logging is extremely noisy on busy servers
+// (hundreds of lines per player join); enable with TS_MVD_DEBUG=1.
+const DEBUG = !!process.env.TS_MVD_DEBUG;
+
 parser.onConfigString = (ev) => {
     configstrings.set(ev.index, ev.value);
-    console.log(`[configstring ${ev.index}] "${ev.value}"`);
+    if (DEBUG) console.log(`[configstring ${ev.index}] "${ev.value}"`);
 };
 
 parser.onFrame = (ev) => {
@@ -1027,6 +1031,10 @@ if (require.main === module) {
         httpServer.close();
         udpSock.close();
         client.disconnect();
+        pakIndex.close();
+        try {
+            fs.rmSync(PAK_OVERLAY_DIR, { recursive: true, force: true });
+        } catch { /* temp dir cleanup is best-effort */ }
         process.exit(0);
     });
 }
