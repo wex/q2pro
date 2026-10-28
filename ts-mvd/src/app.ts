@@ -1,5 +1,6 @@
 import * as dgram from 'node:dgram';
 import * as http from 'node:http';
+import * as net from 'node:net';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -421,7 +422,28 @@ let latestStatus: StatusData | null = null;
 
 const udpSock = dgram.createSocket('udp4');
 
-udpSock.on('message', (msg: Buffer) => {
+/**
+ * True when `rinfo` plausibly answers the status query sent to
+ * `targetHost:targetPort` (defaults to the current live target). The port
+ * must match the polled server; when the host is an IP literal the sender
+ * address must match too (hostname targets rely on the port check —
+ * comparing would need a DNS lookup).
+ */
+export function isStatusReplySource(
+    rinfo: { port: number; address: string },
+    targetHost = host,
+    targetPort = port,
+): boolean {
+    if (rinfo.port !== targetPort) return false;
+    if (net.isIP(targetHost) && rinfo.address !== targetHost) return false;
+    return true;
+}
+
+udpSock.on('message', (msg: Buffer, rinfo: dgram.RemoteInfo) => {
+    // Only accept replies from the host:port we actually poll — anything
+    // else on this socket is unsolicited.
+    if (!isStatusReplySource(rinfo)) return;
+
     // OOB packets start with 0xFFFFFFFF
     if (msg.length < 4 || msg[0] !== 0xff || msg[1] !== 0xff || msg[2] !== 0xff || msg[3] !== 0xff) return;
 
@@ -545,6 +567,9 @@ const COLORMAP_PATH = path.resolve(__dirname, '..', 'colormap.pcx');
 const DEMOS_DIR = path.resolve(__dirname, '..', 'assets', 'demos');
 const PAKS_DIR = path.resolve(__dirname, '..', 'paks');
 const HTTP_PORT = parseInt(process.env.HTTP_PORT || '8080', 10);
+// Bind localhost by default — the control surface can open TCP/UDP to
+// arbitrary hosts via /connect, so exposing it on the LAN is opt-in.
+const HTTP_HOST = process.env.HTTP_HOST || '127.0.0.1';
 
 // ── Pak/Pkz asset fallback ──────────────────────────────────────
 //
@@ -970,8 +995,8 @@ export function resetAppStateForTests(): void {
 // ── CLI bootstrap ───────────────────────────────────────────────
 
 if (require.main === module) {
-    httpServer.listen(HTTP_PORT, () => {
-        console.log(`[http] Listening on http://localhost:${HTTP_PORT}`);
+    httpServer.listen(HTTP_PORT, HTTP_HOST, () => {
+        console.log(`[http] Listening on http://${HTTP_HOST}:${HTTP_PORT}`);
         console.log(`[http]   GET  /maps/{name}  — SVG map render`);
         console.log(`[http]   GET  /events       — SSE stream`);
         console.log(`[http]   GET  /state        — current mode (idle/live/replay)`);

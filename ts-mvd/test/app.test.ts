@@ -19,7 +19,7 @@ jest.mock('net', () => ({
     },
 }));
 
-import { httpServer, resetAppStateForTests, DEMOS_DIR, parser, getScoreboardForTests, getPlayersForTests, sseClients, sseHeartbeatTick } from '../src/app';
+import { httpServer, resetAppStateForTests, DEMOS_DIR, parser, getScoreboardForTests, getPlayersForTests, sseClients, sseHeartbeatTick, isStatusReplySource } from '../src/app';
 import { PlayerState } from '../src/frame';
 import { Stat } from '../src/protocol';
 
@@ -360,6 +360,21 @@ describe('HTTP control surface', () => {
             res.on('error', () => sseClients.delete(res));
             res.emit('error', new Error('boom'));
             expect(sseClients.has(res)).toBe(false);
+        });
+    });
+
+    describe('OOB status reply source check', () => {
+        test('accepts a reply from the polled host:port', () => {
+            expect(isStatusReplySource({ port: 27910, address: '127.0.0.1' }, '127.0.0.1', 27910)).toBe(true);
+        });
+        test('drops replies from a different source port', () => {
+            expect(isStatusReplySource({ port: 9999, address: '127.0.0.1' }, '127.0.0.1', 27910)).toBe(false);
+        });
+        test('drops replies from a different address when host is an IP literal', () => {
+            expect(isStatusReplySource({ port: 27910, address: '10.0.0.9' }, '127.0.0.1', 27910)).toBe(false);
+        });
+        test('accepts any address when host is a hostname (port match only)', () => {
+            expect(isStatusReplySource({ port: 27910, address: '10.0.0.9' }, 'gtv.example.com', 27910)).toBe(true);
         });
     });
 });
