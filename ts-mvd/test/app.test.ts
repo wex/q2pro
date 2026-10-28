@@ -290,6 +290,25 @@ describe('HTTP control surface', () => {
         expect(res.status).toBe(404);
     });
 
+    test('second POST /connect while connecting returns 409 already-connected', async () => {
+        const r1 = await request(httpServer)
+            .post('/connect')
+            .set('content-type', 'application/json')
+            .send({ host: 'fake.local', port: 27910 });
+        expect(r1.status).toBe(202);
+
+        // The client is now in Connecting; a concurrent POST must be rejected
+        // by the setTarget gate, not silently accepted.
+        const r2 = await request(httpServer)
+            .post('/connect')
+            .set('content-type', 'application/json')
+            .send({ host: 'other.local', port: 27911 });
+        expect(r2.status).toBe(409);
+        expect(r2.body.error).toBe('already-connected');
+
+        await request(httpServer).post('/disconnect').expect(204);
+    });
+
     test('POST /connect while replay is active returns 409', async () => {
         const r1 = await request(httpServer).post('/replay?file=demo.mvd2');
         expect(r1.status).toBe(202);

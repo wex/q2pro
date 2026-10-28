@@ -756,9 +756,20 @@ const httpServer = http.createServer((req, res) => {
                 }
                 nextPassword = b.password;
             }
+            // Re-check after the async body read — a replay may have started
+            // or a concurrent /connect may have won the race meanwhile.
+            if (currentReplay) {
+                sendJson(res, 409, { error: 'replay-active' });
+                return;
+            }
+            // setTarget only succeeds while Disconnected; it is the atomic
+            // gate that closes the check-then-connect TOCTOU.
+            if (!client.setTarget(nextHost, nextPort, nextPassword)) {
+                sendJson(res, 409, { error: 'already-connected', state: client.state });
+                return;
+            }
             host = nextHost;
             port = nextPort;
-            client.setTarget(host, port, nextPassword);
             client.connect();
             sendJson(res, 202, { state: client.state, host, port });
         }).catch((err: Error) => {
