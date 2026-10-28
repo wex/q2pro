@@ -74,31 +74,35 @@ Add a `skipInnerSound()` mirroring `skipSound()`.
 5. **SSE write hygiene — `src/app.ts` — FIXED (fix/sse-hygiene).** `sseWrite()` ends clients
    buffered past 1 MiB, a 25 s unref'd heartbeat emits `:hb` comments, and `error` removes
    clients from the set.
-6. **Network exposure — `src/app.ts`.** `httpServer.listen(HTTP_PORT)` binds all interfaces
-   with no auth; `POST /connect` makes the server open TCP to any host:port and
-   `sendOOBStatus` sends UDP there. Default to `127.0.0.1` with an `HTTP_HOST` override. UDP
-   status replies are not matched against `host:port` (spoofable).
-7. **`/connect` TOCTOU.** State is checked before `await readJsonBody`; two concurrent POSTs can
-   both pass; the second `connect()` is a silent no-op while still returning 202.
-8. **Minor.**
-   - `BufferReader.readString` decodes `ascii`, which masks the high bit — accidental; it
-     strips Q2 "green text" before `classifyChat` runs. `latin1` would preserve it for an
-     explicit strip step. `BufferWriter.writeString` has the same limitation (non-ASCII
-     passwords).
-   - `pak.ts` `read()` does not validate `offset + compressedSize <= archive.size` nor the
-     `readSync` byte count.
-   - `PAK_OVERLAY_DIR` is never removed (open since previous audit).
-   - `[configstring N]` is logged on every update — noisy on busy servers.
+6. **Network exposure — `src/app.ts` — FIXED (fix/http-hardening).** HTTP binds to
+   `127.0.0.1` by default (`HTTP_HOST` env overrides). UDP OOB status replies are now
+   validated via `isStatusReplySource()`: source port must match and, when the target
+   host is an IP literal, the source address must match too.
+7. **`/connect` TOCTOU — FIXED (fix/connect-toctou).** Replay/state is re-checked inside
+   the async body handler and the connect is gated on `client.setTarget()` success, which
+   only succeeds while `Disconnected`. A racing second POST now gets 409 instead of a
+   false 202.
+8. **Minor — mostly FIXED (fix/audit-minor-items).**
+   - `BufferReader.readString`/`BufferWriter.writeString` now use `latin1`, preserving
+     Q2 high-bit bytes (FIXED).
+   - `pak.ts` `read()` validates `offset + compressedSize <= archive.size` and the
+     `readSync` byte count (FIXED).
+   - `PAK_OVERLAY_DIR` is removed on SIGINT alongside `pakIndex.close()` (FIXED).
+   - `[configstring N]` logging is gated behind `TS_MVD_DEBUG=1` (FIXED).
    - Three chained `parser.onFrame` wrappers in `app.ts` are hard to follow (EventEmitter
-     refactor still pending).
-   - `MvdClient.sendStreamStart()` is public and sets state `Ready` even when disconnected.
+     refactor still pending — open, low priority).
+   - `MvdClient.sendStreamStart()` is public and sets state `Ready` even when disconnected
+     — mitigated by the internal guard added in finding 4; a stricter API is open.
 
 ## Test gaps
 
-- A fixture with a populated vanilla `CS_MODELS` range (would have caught bug 1).
-- `svc_sound` followed by `svc_temp_entity` in one multicast payload (bug 2).
-- No coverage for `wal.ts`, `map-render.ts`, `texture-export.ts`, or the `/maps` happy path
-  (render is ~6–56 ms, so a snapshot test is cheap).
+- A fixture with a populated vanilla `CS_MODELS` range (would have caught bug 1) — added
+  in fix/cs-layout-selection.
+- `svc_sound` followed by `svc_temp_entity` in one multicast payload (bug 2) — added in
+  fix/inner-svc-ops.
+- `wal.ts`, `map-render.ts` and the `/maps` happy path — covered on test/map-pipeline via
+  `buildSynthBsp()` fixture (parseWal, walToRgba, PNG encode, palette loader, SVG output,
+  textured pattern path, route 200/404). `texture-export.ts` still uncovered.
 - `demo.ts` realtime pacing is untested. Pacing is 1 message per tick; the bundled demo is
   exactly 1 frame per message (419/419), so this is correct today.
 
@@ -126,6 +130,8 @@ Add a `skipInnerSound()` mirroring `skipSound()`.
 1. ~~Fix bug 1 (expose layout from parser; single base-set lookup in app/loadout/app.js) + tests~~ done.
 2. ~~Fix bug 2 (`skipInnerSound`) + test~~ done (also inner `svc_configstring`).
 3. ~~Deduplicate `onTcpClose` / `softClose` / `Reconnect` in `client.ts`~~ done.
-4. ~~SSE backpressure + heartbeat~~ done; bind HTTP to localhost by default — open.
-5. Map-pipeline tests (`wal` / `map-render` / `/maps`) — open follow-up.
-6. Features 1, 2, 6 (small); 4, 5, 7 (larger) — open.
+4. ~~SSE backpressure + heartbeat~~ done; ~~bind HTTP to localhost by default~~ done.
+5. ~~`/connect` TOCTOU~~ done; ~~minor items~~ done except `onFrame` refactor and
+   `sendStreamStart` API tightening.
+6. ~~Map-pipeline tests (`wal` / `map-render` / `/maps`)~~ done.
+7. Features 1, 2, 6 (small); 4, 5, 7 (larger) — open, out of scope for now.
