@@ -108,22 +108,34 @@ Add a `skipInnerSound()` mirroring `skipSound()`.
 
 ## Feature suggestions
 
-1. **Demo pause / seek / speed** — `MvdDemoReader` already holds all messages in memory;
-   `pause()`, `seek(frame)` (replay from last serverdata) and a `speed` multiplier are small
-   and would make a browser scrubber trivial.
-2. **Sound events** — once bug 2 is fixed, surface `onSound` (index → `CS_SOUNDS` name) so the
-   UI can show footsteps / reloads / grenade bounces on the map.
-3. **Per-round stats** — `onDeath` + `HitEvent` + `ObituaryEvent` suffice to compute K/D,
-   accuracy-by-location and a round timeline server-side; expose via `GET /stats` and SSE.
-4. **GTF_DEFLATE** — the one GTV capability still missing; `zlib.inflateSync` per message once
-   the 2-byte length framing is kept outside the compressed region.
-5. **Multi-stream** — `app.ts` is a singleton (one `client`, one `parser`). A `Session` class
-   wrapping the pipeline enables following several servers from one UI and removes the
-   `onFrame` chaining.
-6. **Record live to `.mvd2`** — the client receives exactly the bytes a demo contains; writing
-   `MVD2` + `[u16 len][payload]` to disk is ~20 lines and gives replays of live sessions.
-7. **Migrate `public/app.js` to TypeScript** — 1.5k lines duplicating constants from
-   `player-loadout.ts` / `protocol.ts` (and already duplicating bug 1).
+Status as of 2026-08-05: all seven implemented on stacked feature branches
+(each with a `doc/<feature>.md` and tests). Suggestion 5 landed as the
+Session groundwork — parallel multi-stream runtime remains future work;
+suggestion 7 landed as typecheck-in-place, not a full TS port.
+
+1. ~~**Demo pause / seek / speed**~~ — `feat/demo-controls`. `MvdDemoReader`
+   gained `pause`/`resume`/`seek` (keyframe-snapped)/`setSpeed`; `/replay/control`
+   route + minimal scrubber UI. `doc/demo-controls.md`.
+2. ~~**Sound events**~~ — `feat/sound-events`. `onSound` decodes both
+   `mvd_sound` and inner `svc_sound`; `CsLayout.sounds` resolves names;
+   positional map ping + `sound` SSE. `doc/sound-events.md`.
+3. ~~**Per-round stats**~~ — `feat/session-stats`. `StatsTracker` (K/D,
+   hit locations, weapon tally) + heuristic round detection + `GET /stats` /
+   `stats` SSE + stats panel. `doc/session-stats.md`.
+4. ~~**GTF_DEFLATE**~~ — `feat/gtf-deflate`. `zlib.createInflate` on the
+   post-hello stream (length headers included), on by default, `Z_STREAM_END`
+   → plaintext fallback. `doc/gtf-deflate.md`.
+5. ~~**Multi-stream**~~ — `feat/session-refactor` (groundwork). `Session`
+   class owns the pipeline; routes take `?session=`; the `onFrame` wrapper
+   chain is gone. Parallel live sessions still future work.
+   `doc/session-refactor.md`.
+6. ~~**Record live to `.mvd2`**~~ — `feat/live-mvd-recorder`. `Mvd2Writer`
+   + `POST /record/start|stop` into `assets/demos/`. `doc/live-recording.md`.
+7. ~~**Migrate `public/app.js` to TypeScript**~~ — `feat/browser-typecheck`
+   (first step). `// @ts-check` + `tsconfig.browser.json` +
+   `npm run typecheck:browser`; shared `public/consts.js` with a parity
+   test — kills the constant duplication (incl. the bug-1 clone).
+   `doc/browser-typecheck.md`.
 
 ## Prioritized TODO
 
@@ -134,4 +146,8 @@ Add a `skipInnerSound()` mirroring `skipSound()`.
 5. ~~`/connect` TOCTOU~~ done; ~~minor items~~ done except `onFrame` refactor and
    `sendStreamStart` API tightening.
 6. ~~Map-pipeline tests (`wal` / `map-render` / `/maps`)~~ done.
-7. Features 1, 2, 6 (small); 4, 5, 7 (larger) — open, out of scope for now.
+7. ~~Features 1–7~~ — all implemented on stacked feature branches (see the
+   feature list above for branch + doc references). Remaining follow-ups:
+   real multi-session runtime on top of the Session groundwork, `strict:true`
+   on `tsconfig.browser.json`, `sendStreamStart` API tightening, and
+   `texture-export.ts` coverage.

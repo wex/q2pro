@@ -21,12 +21,15 @@ Source lives in `ts-mvd/src/`:
 - `bsp.ts` — BSP map loader.
 - `wal.ts` — WAL texture loader.
 - `map-render.ts` — map visualization.
-- `demo.ts` — `MvdDemoReader` for `.mvd2` replay files.
+- `demo.ts` — `MvdDemoReader` for `.mvd2` replay files (pause/seek/speed).
+- `mvd2-writer.ts` — live stream → `.mvd2` recorder (`Mvd2Writer`).
+- `stats.ts` — `StatsTracker`, per-round K/D / hit-location / weapon aggregation.
+- `session.ts` — `Session` class: one full pipeline (client+parser+derived state+replay+recorder) per entry in `app.ts`'s `sessions` map.
 - `texture-export.ts` — texture asset export helper.
 - `pak.ts` — read-only `.pak` / `.pkz` (zip) asset indexer used as fallback by `app.ts`.
-- `app.ts` — HTTP/UDP control surface wiring demo + client pipelines.
+- `app.ts` — HTTP/UDP control surface; owns shared resources (SSE set, UDP socket, pak index, routes) and delegates per-session state to `Session`.
 - `index.ts` — public exports.
-- `ts-mvd/public/` — static assets for the browser demo (`index.html`, `app.js`, `app.css`).
+- `ts-mvd/public/` — static assets for the browser demo (`index.html`, `app.js`, `app.css`, `consts.js` — shared `CS_*` constants loaded before `app.js`).
 
 ## Protocol / state machine
 ```
@@ -43,6 +46,7 @@ Run from `ts-mvd/`:
 - `npm run app` — run `src/app.ts` via `ts-node` (HTTP/UDP control surface).
 - `npm test` — run the Jest suite.
 - `npm run test:watch` — Jest in watch mode.
+- `npm run typecheck:browser` — `tsc -p tsconfig.browser.json` typechecks `public/app.js` (`// @ts-check`).
 
 Requires Node.js 20+ (matches `@types/node` ^20).
 
@@ -54,7 +58,7 @@ Requires Node.js 20+ (matches `@types/node` ^20).
 ## Testing & verification
 The test runner is Jest with `ts-jest`. See `doc/testing.md` for the full guide.
 
-- Suites live in `ts-mvd/test/` matching `*.test.ts`: `buffer.test.ts`, `demo.test.ts`, `frame.test.ts`, `client.test.ts`, `app.test.ts`, `player-loadout.test.ts`, `combat-fx.test.ts`, `pak.test.ts`, `bsp.test.ts`.
+- Suites live in `ts-mvd/test/` matching `*.test.ts`: `buffer.test.ts`, `demo.test.ts`, `frame.test.ts`, `client.test.ts`, `app.test.ts`, `player-loadout.test.ts`, `combat-fx.test.ts`, `pak.test.ts`, `bsp.test.ts`, `wal.test.ts`, `map-render.test.ts`, `mvd2-writer.test.ts`, `stats.test.ts`, `browser-consts.test.ts`.
 - Shared fixtures in `ts-mvd/test/helpers/fixtures.ts` (exports `DEMO_PATH` and a `buildMvd2` synth helper). Replay tests use the bundled `ts-mvd/assets/demos/demo.mvd2` so no live Q2Pro server is needed.
 - Configs:
   - `ts-mvd/jest.config.ts` — `ts-jest` preset, `testEnvironment: node`, `forceExit: true` (the `app` module owns long-lived UDP/HTTP handles).
@@ -97,6 +101,14 @@ The test runner is Jest with `ts-jest`. See `doc/testing.md` for the full guide.
 - `doc/texture-toggle.md` — map texture toggle.
 - `doc/player-health-and-death-icon.md` — HP / death icon UI.
 - `doc/ui-team-colours-and-gametime.md` — team colours + gametime.
-- `doc/audit.md` — project audit / fix checklist.
+- `doc/configstring-layout.md` — vanilla vs `MVF_EXTLIMITS` configstring bases.
+- `doc/live-recording.md` — `Mvd2Writer` + `/record` endpoints.
+- `doc/demo-controls.md` — replay pause/seek/speed + `/replay/control`.
+- `doc/sound-events.md` — `onSound` event, CS_SOUNDS name resolution, map ping.
+- `doc/gtf-deflate.md` — zlib stream compression semantics + client opts.
+- `doc/session-stats.md` — `StatsTracker`, round detection, `GET /stats` + SSE.
+- `doc/session-refactor.md` — `Session` class layout, `?session=` scoping.
+- `doc/browser-typecheck.md` — `// @ts-check` browser client + `consts.js`.
+- `doc/audit.md` — project audit / fix checklist (superseded by root `AUDIT.md`).
 - `doc/fable-search.md` — research notes.
 - `doc/how-to-use-devin.md` — onboarding + workflow for Devin.
