@@ -521,4 +521,64 @@ describe('HTTP control surface', () => {
             expect(res.body.error).toBe('invalid-name');
         });
     });
+
+    describe('POST /replay/control', () => {
+        test('returns 409 when no replay is active', async () => {
+            const res = await request(httpServer)
+                .post('/replay/control')
+                .set('content-type', 'application/json')
+                .send({ pause: true });
+            expect(res.status).toBe(409);
+            expect(res.body.error).toBe('no-replay');
+        });
+
+        test('pause, speed and seek round-trip through /state', async () => {
+            await request(httpServer).post('/replay?file=demo.mvd2');
+
+            const pause = await request(httpServer)
+                .post('/replay/control')
+                .set('content-type', 'application/json')
+                .send({ pause: true, speed: 2 });
+            expect(pause.status).toBe(202);
+            expect(pause.body.paused).toBe(true);
+            expect(pause.body.speed).toBe(2);
+            expect(pause.body.messageCount).toBeGreaterThan(0);
+
+            const state = await request(httpServer).get('/state');
+            expect(state.body.replay.paused).toBe(true);
+            expect(state.body.replay.speed).toBe(2);
+
+            // seek past the last keyframe snaps back to it (demo has a
+            // single serverdata near index 0, so snapped stays small).
+            const seek = await request(httpServer)
+                .post('/replay/control')
+                .set('content-type', 'application/json')
+                .send({ seek: 300 });
+            expect(seek.status).toBe(202);
+            expect(seek.body.position).toBeLessThanOrEqual(300);
+
+            const resume = await request(httpServer)
+                .post('/replay/control')
+                .set('content-type', 'application/json')
+                .send({ pause: false });
+            expect(resume.body.paused).toBe(false);
+        });
+
+        test('invalid speed and seek return 400', async () => {
+            await request(httpServer).post('/replay?file=demo.mvd2');
+            const badSpeed = await request(httpServer)
+                .post('/replay/control')
+                .set('content-type', 'application/json')
+                .send({ speed: -1 });
+            expect(badSpeed.status).toBe(400);
+            expect(badSpeed.body.error).toBe('invalid-speed');
+
+            const badSeek = await request(httpServer)
+                .post('/replay/control')
+                .set('content-type', 'application/json')
+                .send({ seek: 'abc' });
+            expect(badSeek.status).toBe(400);
+            expect(badSeek.body.error).toBe('invalid-seek');
+        });
+    });
 });

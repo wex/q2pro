@@ -28,6 +28,9 @@ const elKillfeed = document.getElementById('killfeed');
 const elChat = document.getElementById('chat');
 const elBtnTextures = document.getElementById('btn-textures');
 const elPanel = document.getElementById('panel');
+const elReplayPause = document.getElementById('replay-pause');
+const elReplaySeek = document.getElementById('replay-seek');
+const elReplaySpeed = document.getElementById('replay-speed');
 
 let texturesEnabled = true;      // toggled by Tex button / T hotkey
 let lockedPlayerNum = null;      // null = free camera; integer = locked client slot
@@ -1100,7 +1103,14 @@ function connectSSE() {
     });
 
     es.addEventListener('replayStart', () => {
+        replayState = { paused: false, speed: 1, position: 0, messageCount: 0 };
         refreshSessionState();
+        updateReplayBar();
+    });
+
+    es.addEventListener('replayState', (e) => {
+        replayState = JSON.parse(e.data);
+        updateReplayBar();
     });
 
     es.addEventListener('replayEnd', () => {
@@ -1133,6 +1143,10 @@ function connectSSE() {
             }
         }
         if (data.scoreboard) scoreboardState = data.scoreboard;
+        if (data.replay) {
+            replayState = data.replay;
+            updateReplayBar();
+        }
         invalidateConfigCaches();
         updatePlayerCount();
         checkMapChange();
@@ -1190,6 +1204,14 @@ function connectSSE() {
         teamMapCache = null; // player set may have changed
         updatePlayerCount();
         if (typeof data.frameNumber === 'number') updateGametime(data.frameNumber);
+
+        // One MVD message ≈ one server frame, so the scrubber can advance
+        // locally between sparse replayState updates.
+        if (currentMode === 'replay' && replayState && !replayState.paused
+            && replayState.position < replayState.messageCount) {
+            replayState.position++;
+            updateReplayBar();
+        }
 
         // Update scoreboard from frame-level stats. Merge so that a player
         // who briefly drops out of `data.players` (PPS_REMOVE on death /
@@ -1326,6 +1348,9 @@ playersCanvas.addEventListener('dblclick', () => {
 // ─── Session chooser ─────────────────────────────────────────────────────────
 
 let currentMode = 'idle'; // 'idle' | 'live' | 'replay'
+// Server-authoritative playback state for the active replay, mirrored from
+// /state and replayState SSE events. Drives the minimal replay control bar.
+let replayState = null;
 
 function showSessionError(msg) {
     elSessionError.textContent = msg;
@@ -1361,7 +1386,55 @@ function setMode(mode) {
         elConn.classList.add('connected');
         elStop.hidden = false;
     }
+    const showReplayBar = mode === 'replay';
+    elReplayPause.hidden = !showReplayBar;
+    elReplaySeek.hidden = !showReplayBar;
+    elReplaySpeed.hidden = !showReplayBar;
+    if (!showReplayBar) replayState = null;
 }
+
+function updateReplayBar() {
+    if (!replayState || currentMode !== 'replay') return;
+    elReplayPause.textContent = replayState.paused ? 'Resume' : 'Pause';
+    elReplaySeek.max = Math.max(0, (replayState.messageCount || 0) - 1);
+    // Don't fight the user mid-drag — only sync the slider while unfocused.
+    if (document.activeElement !== elReplaySeek) {
+        elReplaySeek.value = replayState.position || 0;
+    }
+    const want = String(replayState.speed ?? 1);
+    if (elReplaySpeed.value !== want) {
+        // Snap to the nearest offered option (server clamps to [0.25, 8]).
+        const options = Array.from(elReplaySpeed.options).map((o) => o.value);
+        elReplaySpeed.value = options.includes(want) ? want : '1';
+    }
+}
+
+async function postReplayControl(body) {
+    try {
+        const res = await fetch('/replay/control', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        replayState = await res.json();
+        updateReplayBar();
+    } catch (err) {
+        console.error('[replay/control]', err);
+    }
+}
+
+elReplayPause.addEventListener('click', () => {
+    if (replayState) postReplayControl({ pause: !replayState.paused });
+});
+
+elReplaySeek.addEventListener('change', () => {
+    postReplayControl({ seek: parseInt(elReplaySeek.value, 10) });
+});
+
+elReplaySpeed.addEventListener('change', () => {
+    postReplayControl({ speed: parseFloat(elReplaySpeed.value) });
+});
 
 async function refreshSessionState(opts = {}) {
     try {

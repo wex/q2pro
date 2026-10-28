@@ -73,6 +73,33 @@ body {
     background: rgba(80, 80, 80, 0.7);
 }
 
+#replay-pause {
+    padding: 2px 8px;
+    background: rgba(50, 90, 160, 0.55);
+    color: #bcd2ff;
+    border: 1px solid rgba(120, 160, 240, 0.45);
+    border-radius: 3px;
+    font: inherit;
+    cursor: pointer;
+}
+
+#replay-pause:hover {
+    background: rgba(65, 115, 200, 0.7);
+}
+
+#replay-seek {
+    width: 140px;
+    accent-color: #6a9ae0;
+}
+
+#replay-speed {
+    background: #111;
+    color: #ccc;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+    font: inherit;
+}
+
 #status-stop {
     margin-left: 4px;
     padding: 2px 8px;

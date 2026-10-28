@@ -533,6 +533,23 @@ function resetPipelineState(): void {
     latestStatus = null;
 }
 
+/** JSON view of the active replay's playback state (null when idle). */
+function replayStatePayload() {
+    if (!currentReplay) return null;
+    return {
+        file: path.basename(currentReplayFile ?? ''),
+        paused: currentReplay.paused,
+        speed: currentReplay.speed,
+        position: currentReplay.position,
+        messageCount: currentReplay.messageCount,
+    };
+}
+
+function broadcastReplayState(): void {
+    const s = replayStatePayload();
+    if (s) sseBroadcast('replayState', s);
+}
+
 function startReplay(filePath: string): void {
     resetPipelineState();
     const reader = new MvdDemoReader({ realtime: true, tickMs: 100 });
@@ -559,6 +576,14 @@ function startReplay(filePath: string): void {
         currentReplayFile = null;
         sseBroadcast('replayError', { message: err.message });
     });
+    // A seek jumps to an earlier keyframe; everything derived from the stream
+    // (configstrings, players, scoreboard, feeds) must rebuild from there.
+    reader.on('seek', () => {
+        resetPipelineState();
+        broadcastReplayState();
+    });
+    reader.on('pause', broadcastReplayState);
+    reader.on('resume', broadcastReplayState);
 
     sseBroadcast('replayStart', { file: filePath });
     console.log(`[replay] Starting ${filePath}`);
@@ -848,6 +873,52 @@ const httpServer = http.createServer((req, res) => {
         return;
     }
 
+    // POST /replay/control — {pause?, speed?, seek?} applied in that order.
+    // `seek` is a message index; it snaps back to the nearest keyframe and
+    // the snapped position is reported in the response / replayState SSE.
+    if (url.pathname === '/replay/control' && req.method === 'POST') {
+        if (!currentReplay) {
+            sendJson(res, 409, { error: 'no-replay' });
+            return;
+        }
+        readJsonBody(req).then((body) => {
+            if (!currentReplay) {
+                sendJson(res, 409, { error: 'no-replay' });
+                return;
+            }
+            const b = (body ?? {}) as { pause?: unknown; speed?: unknown; seek?: unknown };
+            if (b.pause !== undefined) {
+                if (typeof b.pause !== 'boolean') {
+                    sendJson(res, 400, { error: 'invalid-pause' });
+                    return;
+                }
+                if (b.pause) currentReplay.pause(); else currentReplay.resume();
+            }
+            if (b.seek !== undefined) {
+                const s = typeof b.seek === 'number' ? b.seek : parseInt(String(b.seek), 10);
+                if (!Number.isInteger(s) || s < 0) {
+                    sendJson(res, 400, { error: 'invalid-seek' });
+                    return;
+                }
+                currentReplay.seek(s);
+            }
+            if (b.speed !== undefined) {
+                const v = typeof b.speed === 'number' ? b.speed : parseFloat(String(b.speed));
+                if (!Number.isFinite(v) || v <= 0) {
+                    sendJson(res, 400, { error: 'invalid-speed' });
+                    return;
+                }
+                currentReplay.setSpeed(v);
+            }
+            const st = replayStatePayload();
+            sseBroadcast('replayState', st);
+            sendJson(res, 202, st);
+        }).catch((err: Error) => {
+            sendJson(res, 400, { error: 'invalid-body', message: err.message });
+        });
+        return;
+    }
+
     // POST /record/start?name=foo — begin writing live stream to a .mvd2
     // under DEMOS_DIR so the result is immediately replayable via /replay.
     if (url.pathname === '/record/start' && req.method === 'POST') {
@@ -924,6 +995,7 @@ const httpServer = http.createServer((req, res) => {
             mode,
             clientState: client.state,
             replayFile: currentReplayFile,
+            replay: replayStatePayload(),
             recording: recorder.recording
                 ? { file: path.basename(recorder.file), messages: recorder.messages }
                 : null,
@@ -981,6 +1053,7 @@ const httpServer = http.createServer((req, res) => {
             chatLog,
             killFeed,
             scoreboard,
+            replay: replayStatePayload(),
         })}\n\n`);
 
         sseClients.add(res);
@@ -1094,6 +1167,7 @@ if (require.main === module) {
         console.log(`[http]   POST /connect      — start live GTV (body: { host?, port?, password? }; defaults ${defaultHost}:${defaultPort})`);
         console.log(`[http]   POST /disconnect   — stop live GTV`);
         console.log(`[http]   POST /replay[?file=...] — replay a .mvd2 demo`);
+        console.log(`[http]   POST /replay/control — {pause?, speed?, seek?} playback control`);
         console.log(`[http]   DEL  /replay       — stop active replay`);
         console.log(`[http]   POST /record/start?name=x.mvd2 — record live stream to assets/demos/`);
         console.log(`[http]   POST /record/stop   — finish the active recording`);

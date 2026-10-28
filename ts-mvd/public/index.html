@@ -16,6 +16,14 @@
         <span id="status-time"></span>
         <span id="status-entities"></span>
         <button id="btn-textures" type="button" title="Toggle textures (T)">Tex &#x2713;</button>
+        <button id="replay-pause" type="button" hidden>Pause</button>
+        <input id="replay-seek" type="range" min="0" value="0" title="Seek" hidden>
+        <select id="replay-speed" title="Playback speed" hidden>
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1×</option>
+            <option value="2">2×</option>
+            <option value="4">4×</option>
+        </select>
         <button id="status-stop" type="button" hidden>Stop</button>
     </div>
     <div id="session-modal" class="modal">
