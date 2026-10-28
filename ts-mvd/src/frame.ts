@@ -161,6 +161,15 @@ export interface ServerDataEvent {
     protocol: number;
     version: number;
     flags: number;
+    /**
+     * True when the stream negotiated `MVF_EXTLIMITS` (version >= 2011) and
+     * uses the extended configstring remap (`cs_remap_new`): CS_MODELS=62,
+     * CS_IMAGES=10302, CS_ITEMS=12606, CS_PLAYERSKINS=12862, CS_MAXCLIENTS=60.
+     * False means the vanilla layout (CS_MODELS=32, CS_MAXCLIENTS=30, …).
+     * Consumers must pick the matching base set — probing both layouts
+     * misfires because the EXT bases alias into the vanilla CS_MODELS range.
+     */
+    extended: boolean;
     servercount: number;
     gamedir: string;
     clientNum: number;
@@ -484,6 +493,7 @@ export class MvdFrameParser {
             protocol,
             version,
             flags,
+            extended: this.extended,
             servercount,
             gamedir,
             clientNum,

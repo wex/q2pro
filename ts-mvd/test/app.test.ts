@@ -210,6 +210,61 @@ describe('HTTP control surface', () => {
         expect(getScoreboardForTests().players[2]).toBeUndefined();
     });
 
+    test('scoreboard prune works on vanilla layout where cs 60 is a model path', () => {
+        // Regression: CS_MAXCLIENTS_EXT (60) aliases into the vanilla
+        // CS_MODELS range, so an EXT-first probe parsed a model path → NaN
+        // → the playerskin range check never fired and leavers lingered.
+        parser.onServerData!({
+            protocol: 37,
+            version: 2010,
+            flags: 0,
+            extended: false,
+            servercount: 1,
+            gamedir: 'action',
+            clientNum: -1,
+            configstrings: new Map<number, string>([
+                [30, '20'],
+                [60, 'models/items/armor/jacket/tris.md2'],
+                [1312 + 2, 'someone\\male/grunt'],
+            ]),
+        });
+        parser.onFrame!({
+            frameNumber: 1,
+            players: [mkPlayer(2, 7)],
+            teamScores: { team1: 0, team2: 0, team3: 0 },
+            layoutsFlags: 0,
+        });
+        expect(getScoreboardForTests().players[2]).toEqual({ number: 2, frags: 7 });
+
+        parser.onConfigString!({ index: 1312 + 2, value: '' });
+        expect(getScoreboardForTests().players[2]).toBeUndefined();
+    });
+
+    test('scoreboard prune uses the EXT playerskins base on extended layout', () => {
+        parser.onServerData!({
+            protocol: 37,
+            version: 2012,
+            flags: 0b1100,
+            extended: true,
+            servercount: 1,
+            gamedir: 'action',
+            clientNum: -1,
+            configstrings: new Map<number, string>([
+                [60, '16'],
+                [12862 + 3, 'else\\female/athena'],
+            ]),
+        });
+        parser.onFrame!({
+            frameNumber: 1,
+            players: [mkPlayer(3, 9)],
+            teamScores: { team1: 0, team2: 0, team3: 0 },
+            layoutsFlags: 0,
+        });
+
+        parser.onConfigString!({ index: 12862 + 3, value: '' });
+        expect(getScoreboardForTests().players[3]).toBeUndefined();
+    });
+
     test('scoreboard skips MVD dummy slot (isMvdDummy=true)', () => {
         parser.onFrame!({
             frameNumber: 1,

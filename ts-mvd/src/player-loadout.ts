@@ -21,6 +21,50 @@ export const CS_ITEMS_EXT = 12606;
 export const CS_IMAGES_OLD = 544;
 export const CS_IMAGES_EXT = 10302;
 
+/** Configstring bases for CS_PLAYERSKINS (disconnect detection). */
+export const CS_PLAYERSKINS_OLD = 1312;
+export const CS_PLAYERSKINS_EXT = 12862;
+
+/** Configstring index holding the maxclients count. */
+export const CS_MAXCLIENTS_OLD = 30;
+export const CS_MAXCLIENTS_EXT = 60;
+
+/**
+ * Configstring base indices for one Q2Pro stream layout. `MVF_EXTLIMITS`
+ * streams use `cs_remap_new` (CS_LAYOUT_EXT); everything else uses the
+ * vanilla layout. Always pick exactly one set — probing both misfires
+ * because the EXT bases alias into the vanilla CS_MODELS range (e.g.
+ * `CS_MAXCLIENTS_EXT` = 60 is `CS_MODELS_OLD + 28`, a model path).
+ */
+export interface CsLayout {
+    models: number;
+    images: number;
+    items: number;
+    playerskins: number;
+    maxclients: number;
+}
+
+export const CS_LAYOUT_OLD: CsLayout = {
+    models: CS_MODELS_OLD,
+    images: CS_IMAGES_OLD,
+    items: CS_ITEMS_OLD,
+    playerskins: CS_PLAYERSKINS_OLD,
+    maxclients: CS_MAXCLIENTS_OLD,
+};
+
+export const CS_LAYOUT_EXT: CsLayout = {
+    models: CS_MODELS_EXT,
+    images: CS_IMAGES_EXT,
+    items: CS_ITEMS_EXT,
+    playerskins: CS_PLAYERSKINS_EXT,
+    maxclients: CS_MAXCLIENTS_EXT,
+};
+
+/** Select the configstring layout for `ServerDataEvent.extended`. */
+export function csLayout(extended: boolean): CsLayout {
+    return extended ? CS_LAYOUT_EXT : CS_LAYOUT_OLD;
+}
+
 /** AQ2 weapon typeNum → short label (g_local.h MK23_NUM … GRAPPLE_NUM). */
 export const AQ2_WEAPON_LABELS: Readonly<Record<number, string>> = {
     1: 'MK23',
@@ -129,10 +173,14 @@ export function isScoped(fov: number, sniperIcon: number): boolean {
  * Prefer entity vwep typeNum; else match CS_MODELS[gunindex] path;
  * else STAT_CLIP_ICON (a_m4/a_mag/…) then STAT_AMMO_ICON family icons.
  * Returns typeNum or undefined if unknown.
+ *
+ * `extended` must match `ServerDataEvent.extended` so configstrings are
+ * read from the correct layout (defaults to vanilla).
  */
 export function resolveWeaponTypeNum(
     input: WeaponResolveInput,
     configstrings: Map<number, string> | Record<number, string>,
+    extended = false,
 ): number | undefined {
     const fromEntity = input.weaponTypeNum;
     if (fromEntity != null && fromEntity > 0 && AQ2_WEAPON_LABELS[fromEntity]) {
@@ -141,7 +189,7 @@ export function resolveWeaponTypeNum(
 
     const gun = input.gunindex ?? 0;
     if (gun > 0) {
-        const path = lookupModel(configstrings, gun);
+        const path = lookupModel(configstrings, gun, csLayout(extended).models);
         if (path) {
             const lower = path.toLowerCase();
             for (const { frag, typeNum } of VIEW_MODEL_TO_TYPE) {
@@ -150,7 +198,7 @@ export function resolveWeaponTypeNum(
         }
     }
 
-    const fromAmmo = resolveWeaponLabelFromAmmo(input, configstrings);
+    const fromAmmo = resolveWeaponLabelFromAmmo(input, configstrings, extended);
     if (fromAmmo) {
         for (const [num, label] of Object.entries(AQ2_WEAPON_LABELS)) {
             if (label === fromAmmo) return Number(num);
@@ -162,8 +210,9 @@ export function resolveWeaponTypeNum(
 export function resolveWeaponLabel(
     input: WeaponResolveInput,
     configstrings: Map<number, string> | Record<number, string>,
+    extended = false,
 ): string | undefined {
-    const typeNum = resolveWeaponTypeNum(input, configstrings);
+    const typeNum = resolveWeaponTypeNum(input, configstrings, extended);
     return typeNum != null ? weaponLabel(typeNum) : undefined;
 }
 
@@ -175,19 +224,21 @@ export function resolveWeaponLabel(
 export function resolveWeaponLabelFromAmmo(
     input: WeaponResolveInput,
     configstrings: Map<number, string> | Record<number, string>,
+    extended = false,
 ): string | undefined {
     if (!input.alive || !input.stats) return undefined;
     const stats = input.stats;
+    const imagesBase = csLayout(extended).images;
 
     const clipIdx = (stats[Stat.ClipIcon] as number | undefined) ?? 0;
     if (clipIdx > 0) {
-        const label = iconPathToLabel(lookupImage(configstrings, clipIdx), CLIP_ICON_WEAPON_LABELS);
+        const label = iconPathToLabel(lookupImage(configstrings, clipIdx, imagesBase), CLIP_ICON_WEAPON_LABELS);
         if (label) return label;
     }
 
     const ammoIdx = (stats[Stat.AmmoIcon] as number | undefined) ?? 0;
     if (ammoIdx > 0) {
-        return iconPathToLabel(lookupImage(configstrings, ammoIdx), AMMO_ICON_WEAPON_LABELS);
+        return iconPathToLabel(lookupImage(configstrings, ammoIdx, imagesBase), AMMO_ICON_WEAPON_LABELS);
     }
     return undefined;
 }
@@ -220,12 +271,14 @@ export function resolveSelectedItem(
     stats: ArrayLike<number>,
     alive: boolean,
     configstrings: Map<number, string> | Record<number, string>,
+    extended = false,
 ): string | undefined {
     if (!alive) return undefined;
 
+    const layout = csLayout(extended);
     const iconIdx = (stats[Stat.ItemsIcon] as number | undefined) ?? 0;
     if (iconIdx > 0) {
-        const icon = lookupImage(configstrings, iconIdx);
+        const icon = lookupImage(configstrings, iconIdx, layout.images);
         if (icon) {
             const base = icon.replace(/^.*\//, '').toLowerCase();
             const fromIcon = AQ2_ITEM_ICON_LABELS[base] ?? AQ2_ITEM_ICON_LABELS[icon];
@@ -235,7 +288,7 @@ export function resolveSelectedItem(
 
     const idx = (stats[Stat.SelectedItem] as number | undefined) ?? 0;
     if (idx < 1) return undefined;
-    const name = lookupItem(configstrings, idx);
+    const name = lookupItem(configstrings, idx, layout.items);
     if (!name) return undefined;
     return AQ2_ITEM_LABELS[name];
 }
@@ -251,26 +304,23 @@ function lookupCs(
 function lookupModel(
     configstrings: Map<number, string> | Record<number, string>,
     gunindex: number,
+    modelsBase: number,
 ): string {
-    return lookupCs(configstrings, CS_MODELS_EXT + gunindex)
-        || lookupCs(configstrings, CS_MODELS_OLD + gunindex)
-        || '';
+    return lookupCs(configstrings, modelsBase + gunindex);
 }
 
 function lookupItem(
     configstrings: Map<number, string> | Record<number, string>,
     itemIndex: number,
+    itemsBase: number,
 ): string {
-    return lookupCs(configstrings, CS_ITEMS_EXT + itemIndex)
-        || lookupCs(configstrings, CS_ITEMS_OLD + itemIndex)
-        || '';
+    return lookupCs(configstrings, itemsBase + itemIndex);
 }
 
 function lookupImage(
     configstrings: Map<number, string> | Record<number, string>,
     imageIndex: number,
+    imagesBase: number,
 ): string {
-    return lookupCs(configstrings, CS_IMAGES_EXT + imageIndex)
-        || lookupCs(configstrings, CS_IMAGES_OLD + imageIndex)
-        || '';
+    return lookupCs(configstrings, imagesBase + imageIndex);
 }

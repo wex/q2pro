@@ -33,8 +33,27 @@ describe('player-loadout', () => {
     test('resolveWeaponTypeNum falls back to CS_MODELS path', () => {
         const cs: Record<number, string> = {};
         cs[CS_MODELS_EXT + 7] = 'models/weapons/v_sniper/tris.md2';
-        expect(resolveWeaponTypeNum({ gunindex: 7 }, cs)).toBe(6);
-        expect(resolveWeaponLabel({ gunindex: 7 }, cs)).toBe('SSG');
+        expect(resolveWeaponTypeNum({ gunindex: 7 }, cs, true)).toBe(6);
+        expect(resolveWeaponLabel({ gunindex: 7 }, cs, true)).toBe('SSG');
+    });
+
+    test('resolveWeaponTypeNum reads only the OLD layout when extended=false', () => {
+        // On a vanilla-layout stream CS_MODELS_EXT aliases into the CS_MODELS
+        // range — the aliased slot holds a real but unrelated model path.
+        const cs = new Map<number, string>();
+        cs.set(CS_MODELS_OLD + 5, 'models/weapons/v_sniper/tris.md2');
+        cs.set(CS_MODELS_EXT + 5, 'models/items/armor/jacket/tris.md2');
+        expect(resolveWeaponTypeNum({ gunindex: 5 }, cs, false)).toBe(6);
+        expect(resolveWeaponLabel({ gunindex: 5 }, cs, false)).toBe('SSG');
+    });
+
+    test('resolveWeaponTypeNum reads only the EXT layout when extended=true', () => {
+        const cs = new Map<number, string>();
+        cs.set(CS_MODELS_EXT + 7, 'models/weapons/v_m4/tris.md2');
+        // Vanilla-layout value at the aliased OLD index must not win.
+        cs.set(CS_MODELS_OLD + 7, 'models/items/armor/jacket/tris.md2');
+        expect(resolveWeaponTypeNum({ gunindex: 7 }, cs, true)).toBe(3);
+        expect(resolveWeaponLabel({ gunindex: 7 }, cs, true)).toBe('M4');
     });
 
     test('resolveWeaponTypeNum returns undefined when gunindex is 0', () => {

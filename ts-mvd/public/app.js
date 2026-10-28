@@ -50,6 +50,14 @@ let teamMapCache = null;
 let playerInfoCache = {};
 let maxclientsCache = 0;
 
+// Configstring layout of the current stream (from serverdata.extended).
+// The EXT bases alias into the vanilla CS_MODELS range, so always pick one
+// base set rather than probing both.
+let csExtended = false;
+const csB = () => (csExtended
+    ? { models: CS_MODELS_EXT, playerskins: CS_PLAYERSKINS_EXT, maxclients: CS_MAXCLIENTS_EXT }
+    : { models: CS_MODELS_OLD, playerskins: CS_PLAYERSKINS_OLD, maxclients: CS_MAXCLIENTS_OLD });
+
 // ─── Configstring constants / colours ────────────────────────────────────────
 
 const CS_MAXCLIENTS_OLD = 30;
@@ -633,10 +641,7 @@ function renderPlayers() {
 // ─── Caches ──────────────────────────────────────────────────────────────────
 
 function parsePlayerInfo(playerNumber) {
-    const cs =
-        configstrings[CS_PLAYERSKINS_EXT + playerNumber] ||
-        configstrings[CS_PLAYERSKINS_OLD + playerNumber] ||
-        '';
+    const cs = configstrings[csB().playerskins + playerNumber] || '';
     const sep = cs.indexOf('\\');
     if (sep === -1) return { name: '', skin: cs };
     return { name: cs.substring(0, sep), skin: cs.substring(sep + 1) };
@@ -696,7 +701,8 @@ function getTeamMap() {
 
 function recomputeMaxclients() {
     maxclientsCache = statusMaxclients ||
-        parseInt(configstrings[CS_MAXCLIENTS_EXT] || configstrings[CS_MAXCLIENTS_OLD] || '0', 10);
+        parseInt(configstrings[csB().maxclients] || '0', 10) ||
+        0;
 }
 
 function invalidateConfigCaches() {
@@ -742,11 +748,8 @@ function formatAmmo(lo) {
 
 function extractMapname() {
     const re = /^maps\/(.+)\.bsp$/;
-    for (const idx of [CS_MODELS_EXT + 1, CS_MODELS_OLD + 1]) {
-        const m = (configstrings[idx] || '').match(re);
-        if (m) return m[1];
-    }
-    return '';
+    const m = (configstrings[csB().models + 1] || '').match(re);
+    return m ? m[1] : '';
 }
 
 function checkMapChange() {
@@ -1118,6 +1121,7 @@ function connectSSE() {
 
     es.addEventListener('snapshot', (e) => {
         const data = JSON.parse(e.data);
+        csExtended = !!data.extended;
         configstrings = data.configstrings || {};
         players = data.players || [];
         loadoutCache = {};
@@ -1143,6 +1147,7 @@ function connectSSE() {
 
     es.addEventListener('serverdata', (e) => {
         const data = JSON.parse(e.data);
+        csExtended = !!data.extended;
         configstrings = data.configstrings || {};
         invalidateConfigCaches();
         checkMapChange();
@@ -1167,14 +1172,12 @@ function connectSSE() {
         // A cleared playerskin configstring signals client disconnect; drop
         // their scoreboard row so leavers don't linger with stale frags.
         if (value === '') {
-            const cap = Math.max(maxclientsCache, 256);
-            for (const base of [CS_PLAYERSKINS_OLD, CS_PLAYERSKINS_EXT]) {
-                if (index >= base && index < base + cap) {
-                    const num = index - base;
-                    delete scoreboardState.players[num];
-                    delete loadoutCache[num];
-                    break;
-                }
+            const base = csB().playerskins;
+            const cap = maxclientsCache > 0 && maxclientsCache <= 256 ? maxclientsCache : 256;
+            if (index >= base && index < base + cap) {
+                const num = index - base;
+                delete scoreboardState.players[num];
+                delete loadoutCache[num];
             }
         }
         renderScoreboard();

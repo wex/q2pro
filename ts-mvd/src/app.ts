@@ -24,6 +24,7 @@ import { generateMapSvg } from './map-render';
 import { CombatFxResolver } from './combat-fx';
 import { PakIndex } from './pak';
 import {
+    csLayout,
     extractAmmo,
     isAlive,
     isScoped,
@@ -65,13 +66,11 @@ combatFx.notePlayers(players);
 const CHAT_LOG_MAX = 200;
 const KILL_FEED_MAX = 50;
 
-// CS_PLAYERSKINS base indices (vanilla and ext-limits layouts). When the
-// configstring at base+clientNum becomes empty, the slot is free and that
-// player has disconnected — drop their scoreboard entry.
-const CS_PLAYERSKINS_OLD = 1312;
-const CS_PLAYERSKINS_EXT = 12862;
-const CS_MAXCLIENTS_OLD = 30;
-const CS_MAXCLIENTS_EXT = 60;
+// Configstring layout of the current stream, taken from
+// `ServerDataEvent.extended` (see doc/configstring-layout.md). Drives
+// weapon/item lookups and playerskin-index math — probing both layouts is
+// wrong because the EXT bases alias into the vanilla CS_MODELS range.
+let csExtended = false;
 
 interface ChatEntry extends ChatEvent { t: number }
 interface KillEntry extends ObituaryEvent { t: number }
@@ -119,8 +118,9 @@ function serializePlayerForSse(p: PlayerState): SsePlayerPayload {
             alive,
         },
         configstrings,
+        csExtended,
     );
-    const item = resolveSelectedItem(p.stats, alive, configstrings);
+    const item = resolveSelectedItem(p.stats, alive, configstrings, csExtended);
     const pos = MvdFrameParser.originToWorld(p.origin);
     return {
         number: p.number,
@@ -145,6 +145,7 @@ function serializePlayerForSse(p: PlayerState): SsePlayerPayload {
 parser.onServerData = (ev) => {
     configstrings.clear();
     players.clear();
+    csExtended = ev.extended;
     for (const [index, value] of ev.configstrings) {
         configstrings.set(index, value);
     }
@@ -293,6 +294,7 @@ parser.onServerData = (ev) => {
         protocol: ev.protocol,
         version: ev.version,
         flags: ev.flags,
+        extended: ev.extended,
         gamedir: ev.gamedir,
         clientNum: ev.clientNum,
         configstrings: cs,
@@ -303,18 +305,15 @@ const origOnConfigString = parser.onConfigString;
 parser.onConfigString = (ev) => {
     origOnConfigString?.(ev);
     // Drop scoreboard entries when a player slot's playerskin configstring is
-    // cleared (the server's signal that the client has disconnected).
+    // cleared (the server's signal that the client has disconnected). The
+    // playerskins base must come from the negotiated layout — the other
+    // layout's base aliases into a different configstring range.
     if (ev.value === '') {
-        const maxclients = parseInt(
-            configstrings.get(CS_MAXCLIENTS_EXT) ?? configstrings.get(CS_MAXCLIENTS_OLD) ?? '0',
-            10,
-        );
-        for (const base of [CS_PLAYERSKINS_OLD, CS_PLAYERSKINS_EXT]) {
-            if (ev.index >= base && ev.index < base + Math.max(maxclients, 256)) {
-                const num = ev.index - base;
-                delete scoreboard.players[num];
-                break;
-            }
+        const bases = csLayout(csExtended);
+        const maxclients = parseInt(configstrings.get(bases.maxclients) ?? '0', 10);
+        const cap = maxclients > 0 && maxclients <= 256 ? maxclients : 256;
+        if (ev.index >= bases.playerskins && ev.index < bases.playerskins + cap) {
+            delete scoreboard.players[ev.index - bases.playerskins];
         }
     }
     sseBroadcast('configstring', ev);
@@ -458,6 +457,7 @@ function resetPipelineState(): void {
     parser.reset();
     configstrings.clear();
     players.clear();
+    csExtended = false;
     combatFx.reset();
     combatFx.notePlayers(players);
     chatLog.length = 0;
@@ -836,6 +836,7 @@ const httpServer = http.createServer((req, res) => {
         const ps = Array.from(players.values()).map((p) => serializePlayerForSse(p));
         res.write(`event: snapshot\ndata: ${JSON.stringify({
             configstrings: cs,
+            extended: csExtended,
             players: ps,
             status: latestStatus,
             chatLog,
