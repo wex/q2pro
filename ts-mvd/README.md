@@ -165,7 +165,7 @@ DISCONNECTED → CONNECTING → CONNECTED → PREPARING → READY → STREAMING
 | `streamSuspend` | — | Empty stream data (no players) |
 | `streamResume` | `Buffer` | Data after suspension |
 | `pong` | — | Ping reply received |
-| `error` | `{ code, message }` | Protocol or network error |
+| `error` | `{ code, message }` | Protocol or network error. Emitted only when a listener is attached — unhandled errors are dropped rather than thrown, so attach a listener if you need them (lifecycle still surfaces via `disconnect`/`close`). |
 | `disconnect` | `{ reason }` | Server disconnect/reconnect |
 | `close` | — | TCP socket closed |
 | `stateChange` | `{ from, to }` | Any state transition |

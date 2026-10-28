@@ -112,6 +112,17 @@ describe('MvdClient state machine', () => {
         expect(sock.writes[0]).toEqual(MVD_MAGIC);
     });
 
+    test('unhandled errors do not throw when no error listener is attached', () => {
+        const c = make();
+        // No 'error' listener — a raw EventEmitter emit('error') would throw.
+        c.connect();
+        const sock = lastSocket.instance!;
+        sock.emit('connect');
+        expect(() => sock.emit('data', Buffer.from('XXXX', 'ascii'))).not.toThrow();
+        // Lifecycle still runs: the bad magic soft-closed the connection.
+        expect(c.state).toBe(ClientState.Disconnected);
+    });
+
     test('wrong magic echo emits BAD_MAGIC error and disconnects', () => {
         const c = make();
         const errors: Array<{ code: string }> = [];

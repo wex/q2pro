@@ -199,8 +199,19 @@ export class MvdClient extends EventEmitter {
         this.drainRecvBuf();
     }
 
+    /**
+     * Emit the 'error' event only when a listener is attached. Node's
+     * EventEmitter throws on an unhandled 'error' event, which would crash
+     * embedders that only track 'disconnect'/'close' lifecycle events.
+     */
+    private emitError(info: { code: string; message: string }): void {
+        if (this.listenerCount('error') > 0) {
+            this.emit('error', info);
+        }
+    }
+
     private onTcpError(err: Error): void {
-        this.emit('error', { code: 'TCP_ERROR', message: err.message });
+        this.emitError({ code: 'TCP_ERROR', message: err.message });
     }
 
     private onTcpClose(): void {
@@ -244,7 +255,7 @@ export class MvdClient extends EventEmitter {
                 if (this.recvBuf.length < 4) return;
                 const magic = this.recvBuf.subarray(0, 4);
                 if (!magic.equals(MVD_MAGIC)) {
-                    this.emit('error', { code: 'BAD_MAGIC', message: 'Server did not echo MVD magic' });
+                    this.emitError({ code: 'BAD_MAGIC', message: 'Server did not echo MVD magic' });
                     this.softClose();
                     return;
                 }
@@ -280,7 +291,7 @@ export class MvdClient extends EventEmitter {
                 return false;
             }
             if (this.pendingMsgLen > MAX_GTS_MSGLEN) {
-                this.emit('error', { code: 'OVERSIZE', message: `Message too large: ${this.pendingMsgLen}` });
+                this.emitError({ code: 'OVERSIZE', message: `Message too large: ${this.pendingMsgLen}` });
                 this.softClose();
                 return false;
             }
@@ -321,15 +332,15 @@ export class MvdClient extends EventEmitter {
                 this.handleStreamData(payload);
                 break;
             case GtvServerOp.Error:
-                this.emit('error', { code: 'GTS_ERROR', message: 'Server-side error occurred' });
+                this.emitError({ code: 'GTS_ERROR', message: 'Server-side error occurred' });
                 this.softClose();
                 break;
             case GtvServerOp.BadRequest:
-                this.emit('error', { code: 'GTS_BADREQUEST', message: 'Server refused request (bad protocol version)' });
+                this.emitError({ code: 'GTS_BADREQUEST', message: 'Server refused request (bad protocol version)' });
                 this.disconnect();
                 break;
             case GtvServerOp.NoAccess:
-                this.emit('error', { code: 'GTS_NOACCESS', message: 'Access denied (authentication failed)' });
+                this.emitError({ code: 'GTS_NOACCESS', message: 'Access denied (authentication failed)' });
                 this.disconnect();
                 break;
             case GtvServerOp.Disconnect:
@@ -346,7 +357,7 @@ export class MvdClient extends EventEmitter {
                 }
                 break;
             default:
-                this.emit('error', { code: 'UNKNOWN_OPCODE', message: `Unknown server opcode: ${opcode}` });
+                this.emitError({ code: 'UNKNOWN_OPCODE', message: `Unknown server opcode: ${opcode}` });
                 this.softClose();
                 break;
         }
@@ -356,7 +367,7 @@ export class MvdClient extends EventEmitter {
 
     private handleHello(payload: Buffer): void {
         if (payload.length < 4) {
-            this.emit('error', { code: 'BAD_HELLO', message: 'Server hello too short' });
+            this.emitError({ code: 'BAD_HELLO', message: 'Server hello too short' });
             this.softClose();
             return;
         }
