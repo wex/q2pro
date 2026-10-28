@@ -412,6 +412,46 @@ describe('HTTP control surface', () => {
             res.emit('error', new Error('boom'));
             expect(sseClients.has(res)).toBe(false);
         });
+
+        test('parser.onSound broadcasts a sound event with resolved CS name', () => {
+            const { res, writes } = fakeRes(false, 0);
+            sseClients.add(res);
+            // Old layout (csExtended=false default): CS_SOUNDS base = 288.
+            parser.onConfigString!({ index: 288 + 5, value: 'weapons/blastf1a.wav' });
+            parser.onSound!({
+                flags: 12, index: 5, volume: 1, attenuation: 1, timeOffset: 0,
+                entity: 2, channel: 0, position: [64, 128, 0],
+            });
+            const ev = writes.find((w) => w.startsWith('event: sound'));
+            expect(ev).toBeDefined();
+            const payload = JSON.parse(ev!.split('data: ')[1]);
+            expect(payload).toMatchObject({
+                index: 5,
+                name: 'weapons/blastf1a.wav',
+                entity: 2,
+                channel: 0,
+                volume: 1,
+                position: [64, 128, 0],
+            });
+        });
+
+        test('parser.onSound uses the extended CS_SOUNDS base on MVF_EXTLIMITS', () => {
+            const { res, writes } = fakeRes(false, 0);
+            sseClients.add(res);
+            parser.onServerData!({
+                protocol: 37, version: 2011, flags: 4,
+                gamedir: 'action', servercount: 1, clientNum: -1,
+                extended: true, configstrings: new Map(),
+            });
+            parser.onConfigString!({ index: 8254 + 3, value: 'misc/menu.wav' });
+            parser.onSound!({
+                flags: 0, index: 3, volume: 1, attenuation: 1, timeOffset: 0,
+                entity: 0, channel: 0, position: undefined,
+            });
+            const ev = writes.find((w) => w.startsWith('event: sound'));
+            expect(ev).toBeDefined();
+            expect(JSON.parse(ev!.split('data: ')[1]).name).toBe('misc/menu.wav');
+        });
     });
 
     describe('OOB status reply source check', () => {

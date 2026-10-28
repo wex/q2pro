@@ -1,5 +1,5 @@
 import { MvdDemoReader } from '../src/demo';
-import { MvdFrameParser, FrameEvent, ServerDataEvent, ConfigStringEvent, ChatEvent, ObituaryEvent, DeathEvent, classifyHit, classifyChat, classifyObituary } from '../src/frame';
+import { MvdFrameParser, FrameEvent, ServerDataEvent, ConfigStringEvent, ChatEvent, ObituaryEvent, DeathEvent, SoundEvent, classifyHit, classifyChat, classifyObituary } from '../src/frame';
 import { readDemoBytes } from './helpers/fixtures';
 
 interface ParseResult {
@@ -9,6 +9,7 @@ interface ParseResult {
     chats: ChatEvent[];
     obits: ObituaryEvent[];
     deaths: DeathEvent[];
+    sounds: SoundEvent[];
     parseErrors: unknown[];
     parseWarnings: number;
 }
@@ -21,6 +22,7 @@ function parseDemo(): ParseResult {
         chats: [],
         obits: [],
         deaths: [],
+        sounds: [],
         parseErrors: [],
         parseWarnings: 0,
     };
@@ -41,6 +43,7 @@ function parseDemo(): ParseResult {
     parser.onChat = (ev) => result.chats.push(ev);
     parser.onObituary = (ev) => result.obits.push(ev);
     parser.onDeath = (ev) => result.deaths.push({ ...ev, origin: [...ev.origin] as [number, number, number] });
+    parser.onSound = (ev) => result.sounds.push({ ...ev, position: ev.position ? [...ev.position] as [number, number, number] : undefined });
     parser.onParseWarning = () => result.parseWarnings++;
 
     const reader = new MvdDemoReader({ realtime: false });
@@ -127,6 +130,23 @@ describe('MvdFrameParser against demo.mvd2', () => {
         // demo.mvd2 contains svc_sound inside multicast payloads; every inner
         // op must be consumable without tripping the unknown-op bail-out.
         expect(result.parseWarnings).toBe(0);
+    });
+
+    test('emits onSound for the demo\'s inner svc_sound packets', () => {
+        // The demo carries svc_sound in multicasts (previously dropped as
+        // unknown-op warnings). Every event must decode with sane defaults.
+        expect(result.sounds.length).toBeGreaterThan(0);
+        for (const s of result.sounds) {
+            expect(Number.isInteger(s.index)).toBe(true);
+            expect(s.index).toBeGreaterThanOrEqual(0);
+            expect(s.volume).toBeGreaterThanOrEqual(0);
+            expect(s.volume).toBeLessThanOrEqual(1);
+            // 0 is legitimate — ATTN_NONE means "no attenuation" (global sound).
+            expect(s.attenuation).toBeGreaterThanOrEqual(0);
+            expect(Number.isInteger(s.entity)).toBe(true);
+            expect(s.channel).toBeGreaterThanOrEqual(0);
+            expect(s.channel).toBeLessThanOrEqual(7);
+        }
     });
 
     test('isMvdDummy is set only on the serverdata.clientNum slot', () => {
@@ -304,37 +324,61 @@ describe('inner svc ops', () => {
         return tes;
     }
 
+    function collectSounds(parser: MvdFrameParser): SoundEvent[] {
+        const sounds: SoundEvent[] = [];
+        parser.onSound = (ev) => sounds.push(ev);
+        return sounds;
+    }
+
     test('svc_sound (flags 0) is skipped, following svc_temp_entity still parsed', () => {
         const parser = new MvdFrameParser();
         const tes = expectBlood(parser);
+        const sounds = collectSounds(parser);
         parser.parse(mcastAll(Buffer.concat([Buffer.from([9, 0, 7]), TE_BLOOD_VANILLA])));
         expect(parser.parseWarningCount).toBe(0);
         expect(tes).toEqual([{ type: 1, position: [1, 2, 3] }]);
+        // No flags → all defaults: full volume, ATTN_NORM, world entity.
+        expect(sounds).toEqual([{
+            flags: 0, index: 7, volume: 1, attenuation: 1, timeOffset: 0,
+            entity: 0, channel: 0, position: undefined,
+        }]);
     });
 
     test('svc_sound with SND_ENT and SND_POS consumes the right byte count', () => {
         const parser = new MvdFrameParser();
         const tes = expectBlood(parser);
+        const sounds = collectSounds(parser);
         // flags = ENT(8)|POS(4) → u8 index, u16 sendchan, 3x int16 pos.
         const sound = Buffer.from([9, 12, 5, 0x10, 0x00, 64, 0, 128, 0, 192, 0]);
         parser.parse(mcastAll(Buffer.concat([sound, TE_BLOOD_VANILLA])));
         expect(parser.parseWarningCount).toBe(0);
         expect(tes).toEqual([{ type: 1, position: [1, 2, 3] }]);
+        // sendchan 0x10 = entity 2, channel 0; pos [64,128,192] → world [8,16,24].
+        expect(sounds).toEqual([{
+            flags: 12, index: 5, volume: 1, attenuation: 1, timeOffset: 0,
+            entity: 2, channel: 0, position: [8, 16, 24],
+        }]);
     });
 
     test('svc_sound with SND_VOLUME/ATTENUATION/OFFSET optional bytes', () => {
         const parser = new MvdFrameParser();
         const tes = expectBlood(parser);
+        const sounds = collectSounds(parser);
         // flags = VOL(1)|ATT(2)|OFS(16) → u8 index, then 3 optional u8s.
         const sound = Buffer.from([9, 19, 5, 255, 64, 20]);
         parser.parse(mcastAll(Buffer.concat([sound, TE_BLOOD_VANILLA])));
         expect(parser.parseWarningCount).toBe(0);
         expect(tes).toEqual([{ type: 1, position: [1, 2, 3] }]);
+        expect(sounds).toEqual([{
+            flags: 19, index: 5, volume: 1, attenuation: 1, timeOffset: 0.02,
+            entity: 0, channel: 0, position: undefined,
+        }]);
     });
 
     test('svc_sound SND_INDEX16 reads a u16 index on extended streams', () => {
         const parser = new MvdFrameParser();
         const tes = expectBlood(parser);
+        const sounds = collectSounds(parser);
         let ext = false;
         parser.onServerData = (ev) => { ext = ev.extended; };
         parser.parse(serverdataMsg(4, 2011)); // MVF_EXTLIMITS
@@ -344,11 +388,17 @@ describe('inner svc ops', () => {
         parser.parse(mcastAll(Buffer.concat([sound, TE_BLOOD_VANILLA])));
         expect(parser.parseWarningCount).toBe(0);
         expect(tes).toEqual([{ type: 1, position: [1, 2, 3] }]);
+        // 0x1234 index; sendchan 0x10 → entity 2, channel 0.
+        expect(sounds).toEqual([{
+            flags: 40, index: 0x1234, volume: 1, attenuation: 1, timeOffset: 0,
+            entity: 2, channel: 0, position: undefined,
+        }]);
     });
 
     test('svc_sound SND_POS uses ext2 coords on extensions2 streams', () => {
         const parser = new MvdFrameParser();
         const tes = expectBlood(parser);
+        const sounds = collectSounds(parser);
         // MVF_EXTLIMITS(4)|MVF_EXTLIMITS_2(8) = 12, version 2012 → u16 flags word.
         parser.parse(serverdataMsg(12, 2012));
         // flags = INDEX16(32)|ENT(8)|POS(4): u16 index, u16 chan, 3x ext2 coord.
@@ -356,14 +406,20 @@ describe('inner svc ops', () => {
         parser.parse(mcastAll(Buffer.concat([sound, TE_BLOOD_EXT2])));
         expect(parser.parseWarningCount).toBe(0);
         expect(tes).toEqual([{ type: 1, position: [1, 2, 3] }]);
+        expect(sounds).toEqual([{
+            flags: 44, index: 0x1234, volume: 1, attenuation: 1, timeOffset: 0,
+            entity: 2, channel: 0, position: [1, 2, 3],
+        }]);
     });
 
     test('truncated svc_sound stops the walk without crashing', () => {
         const parser = new MvdFrameParser();
         const tes = expectBlood(parser);
+        const sounds = collectSounds(parser);
         // flags = ENT|POS but the payload ends early → remaining svc ops lost.
         parser.parse(mcastAll(Buffer.from([9, 12, 5])));
         expect(tes).toEqual([]);
+        expect(sounds).toEqual([]);
         // Parser still usable on the next message.
         parser.parse(mcastAll(TE_BLOOD_VANILLA));
         expect(tes).toEqual([{ type: 1, position: [1, 2, 3] }]);
@@ -378,5 +434,30 @@ describe('inner svc ops', () => {
         const msg = Buffer.concat([Buffer.from([8, inner.length, 0]), inner]);
         parser.parse(msg);
         expect(events).toEqual([{ index: 1312, value: 'x' }]);
+    });
+
+    test('outer mvd_sound emits onSound with entity/channel, never a position', () => {
+        const parser = new MvdFrameParser();
+        const sounds: SoundEvent[] = [];
+        parser.onSound = (ev) => sounds.push(ev);
+        // op 16, flags = ENT(8): u8 index, u16 sendchan — unconditional even
+        // without SND_ENT (MVD_ParseSound line 452). 0x2B = entity 5, chan 3.
+        parser.parse(Buffer.from([16, 8, 3, 0x2b, 0x00]));
+        expect(sounds).toEqual([{
+            flags: 8, index: 3, volume: 1, attenuation: 1, timeOffset: 0,
+            entity: 5, channel: 3, position: undefined,
+        }]);
+    });
+
+    test('outer mvd_sound with flags 0 still reads the sendchan word', () => {
+        const parser = new MvdFrameParser();
+        const sounds: SoundEvent[] = [];
+        parser.onSound = (ev) => sounds.push(ev);
+        // flags 0: index u8, then mandatory u16 sendchan. 0x0202 → ent 64, chan 2.
+        parser.parse(Buffer.from([16, 0, 9, 0x02, 0x02]));
+        expect(sounds).toEqual([{
+            flags: 0, index: 9, volume: 1, attenuation: 1, timeOffset: 0,
+            entity: 64, channel: 2, position: undefined,
+        }]);
     });
 });

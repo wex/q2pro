@@ -20,6 +20,7 @@ import {
     TempEntityEvent,
     TeamScores,
     DeathEvent,
+    SoundEvent,
 } from './frame';
 import { BspFile } from './bsp';
 import { generateMapSvg } from './map-render';
@@ -417,6 +418,22 @@ parser.onMuzzleFlash = (ev: MuzzleFlashEvent) => {
         shooter: ev.entity - 1,
         weapon: ev.weapon,
         silenced: ev.silenced,
+        t: Date.now(),
+    });
+};
+
+// Sound packets → positional map ping + resolved sample name. The name comes
+// from the CS_SOUNDS range of the negotiated layout (see sound-events doc).
+parser.onSound = (ev: SoundEvent) => {
+    const name = configstrings.get(csLayout(csExtended).sounds + ev.index);
+    sseBroadcast('sound', {
+        index: ev.index,
+        name,
+        channel: ev.channel,
+        entity: ev.entity,
+        position: ev.position,
+        volume: ev.volume,
+        attenuation: ev.attenuation,
         t: Date.now(),
     });
 };

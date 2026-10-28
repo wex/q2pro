@@ -50,6 +50,7 @@ export {
     StatsEvent,
     MuzzleFlashEvent,
     DeathEvent,
+    SoundEvent,
     ParseWarning,
 } from './frame';
 export {
@@ -81,6 +82,8 @@ export {
     CS_PLAYERSKINS_EXT,
     CS_MAXCLIENTS_OLD,
     CS_MAXCLIENTS_EXT,
+    CS_SOUNDS_OLD,
+    CS_SOUNDS_EXT,
     CS_LAYOUT_OLD,
     CS_LAYOUT_EXT,
     CsLayout,

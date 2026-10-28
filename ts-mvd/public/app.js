@@ -182,8 +182,15 @@ const particles = [];
 // deaths: [{ x, y, t0 }] in world coords. One entry per server-side
 // STAT_HEALTH →0 transition; rendered as a fading skull glyph.
 const deaths = [];
+// soundPings: [{ x, y, t0, vol }] in world coords — positional svc_sound
+// events rendered as an expanding ring (see doc/sound-events.md).
+const soundPings = [];
 // Rate-limit bookkeeping: clientNum → { t, kind }.
 const lastDamageByVictim = new Map();
+
+const SOUND_PING_TTL_MS = 700;
+const SOUND_PING_MAX = 64;
+const COLOUR_SOUND = [90, 200, 255]; // cyan — neutral, reads on both teams
 
 function playerOrigin(num) {
     for (const ent of players) {
@@ -244,6 +251,18 @@ function handleDamage(ev) {
 function handleDeath(ev) {
     if (!ev || !Array.isArray(ev.origin)) return;
     deaths.push({ x: ev.origin[0], y: ev.origin[1], t0: performance.now() });
+    scheduleRender(PLAYERS_DIRTY);
+}
+
+function handleSound(ev) {
+    if (!ev || !Array.isArray(ev.position)) return;
+    soundPings.push({
+        x: ev.position[0],
+        y: ev.position[1],
+        t0: performance.now(),
+        vol: typeof ev.volume === 'number' ? ev.volume : 1,
+    });
+    if (soundPings.length > SOUND_PING_MAX) soundPings.shift();
     scheduleRender(PLAYERS_DIRTY);
 }
 
@@ -491,6 +510,26 @@ function renderPlayers() {
         ctx.fill();
     }
     particles.length = aliveParticles;
+
+    // ── Sound pings — expanding ring at the packet's world position ─────
+    let alivePings = 0;
+    for (let i = 0; i < soundPings.length; i++) {
+        const p = soundPings[i];
+        const age = now - p.t0;
+        if (age >= SOUND_PING_TTL_MS) continue;
+        if (alivePings !== i) soundPings[alivePings] = p;
+        alivePings++;
+        const [cx, cy] = worldToSvg(p.x, p.y);
+        const t = age / SOUND_PING_TTL_MS;
+        const alpha = 1 - t;
+        const radius = (8 + t * 32) * (0.7 + p.vol * 0.6);
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = rgba(COLOUR_SOUND, alpha * 0.85);
+        ctx.lineWidth = 2.5 / transform.scale;
+        ctx.stroke();
+    }
+    soundPings.length = alivePings;
 
     ctx.globalAlpha = 1;
 
@@ -1270,6 +1309,10 @@ function connectSSE() {
 
     es.addEventListener('damage', (e) => {
         handleDamage(JSON.parse(e.data));
+    });
+
+    es.addEventListener('sound', (e) => {
+        handleSound(JSON.parse(e.data));
     });
 
     es.addEventListener('error', () => {

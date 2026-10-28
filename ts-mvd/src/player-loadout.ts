@@ -29,6 +29,10 @@ export const CS_PLAYERSKINS_EXT = 12862;
 export const CS_MAXCLIENTS_OLD = 30;
 export const CS_MAXCLIENTS_EXT = 60;
 
+/** Configstring bases for CS_SOUNDS (sound index → sample name). */
+export const CS_SOUNDS_OLD = 288;
+export const CS_SOUNDS_EXT = 8254;
+
 /**
  * Configstring base indices for one Q2Pro stream layout. `MVF_EXTLIMITS`
  * streams use `cs_remap_new` (CS_LAYOUT_EXT); everything else uses the
@@ -42,6 +46,7 @@ export interface CsLayout {
     items: number;
     playerskins: number;
     maxclients: number;
+    sounds: number;
 }
 
 export const CS_LAYOUT_OLD: CsLayout = {
@@ -50,6 +55,7 @@ export const CS_LAYOUT_OLD: CsLayout = {
     items: CS_ITEMS_OLD,
     playerskins: CS_PLAYERSKINS_OLD,
     maxclients: CS_MAXCLIENTS_OLD,
+    sounds: CS_SOUNDS_OLD,
 };
 
 export const CS_LAYOUT_EXT: CsLayout = {
@@ -58,6 +64,7 @@ export const CS_LAYOUT_EXT: CsLayout = {
     items: CS_ITEMS_EXT,
     playerskins: CS_PLAYERSKINS_EXT,
     maxclients: CS_MAXCLIENTS_EXT,
+    sounds: CS_SOUNDS_EXT,
 };
 
 /** Select the configstring layout for `ServerDataEvent.extended`. */

@@ -166,10 +166,11 @@ export interface ServerDataEvent {
     /**
      * True when the stream negotiated `MVF_EXTLIMITS` (version >= 2011) and
      * uses the extended configstring remap (`cs_remap_new`): CS_MODELS=62,
-     * CS_IMAGES=10302, CS_ITEMS=12606, CS_PLAYERSKINS=12862, CS_MAXCLIENTS=60.
-     * False means the vanilla layout (CS_MODELS=32, CS_MAXCLIENTS=30, …).
-     * Consumers must pick the matching base set — probing both layouts
-     * misfires because the EXT bases alias into the vanilla CS_MODELS range.
+     * CS_SOUNDS=8254, CS_IMAGES=10302, CS_ITEMS=12606, CS_PLAYERSKINS=12862,
+     * CS_MAXCLIENTS=60. False means the vanilla layout (CS_MODELS=32,
+     * CS_SOUNDS=288, CS_MAXCLIENTS=30, …). Consumers must pick the matching
+     * base set — probing both layouts misfires because the EXT bases alias
+     * into the vanilla CS_MODELS range.
      */
     extended: boolean;
     servercount: number;
@@ -273,6 +274,32 @@ export interface MuzzleFlashEvent {
     silenced: boolean;
 }
 
+/**
+ * A start-sound packet, emitted for both top-level `mvd_sound` and inner
+ * `svc_sound` inside unicast/multicast payloads. Field semantics follow
+ * `CL_ParseStartSoundPacket` (src/client/parse.c).
+ */
+export interface SoundEvent {
+    /** Raw SND_* flags byte (inc/common/protocol.h). */
+    flags: number;
+    /** Index into the CS_SOUNDS configstring range. */
+    index: number;
+    /** Loudness 0..1 — `SND_VOLUME` byte /255, or 1.0 when the flag is absent. */
+    volume: number;
+    /** Attenuation scale — `SND_ATTENUATION` byte /64, or 1.0 (ATTN_NORM) when absent. */
+    attenuation: number;
+    /** Delay from frame start in seconds — `SND_OFFSET` byte /1000, or 0. */
+    timeOffset: number;
+    /** Entity the sound is attached to; 0 for auto-channel/world sounds. */
+    entity: number;
+    /** Sound channel 0..7 (CHAN_AUTO=0 when entity-less). */
+    channel: number;
+    /** World-space position — only present when `SND_POS` is set (inner
+     *  svc_sound; the outer mvd_sound never carries one — the server derives
+     *  it from the entity origin for each client). */
+    position?: [number, number, number];
+}
+
 // ── Frame parser ────────────────────────────────────────────────────
 
 export class MvdFrameParser {
@@ -326,6 +353,7 @@ export class MvdFrameParser {
     onStats: ((event: StatsEvent) => void) | null = null;
     onMuzzleFlash: ((event: MuzzleFlashEvent) => void) | null = null;
     onDeath: ((event: DeathEvent) => void) | null = null;
+    onSound: ((event: SoundEvent) => void) | null = null;
     /** Fired when an unknown MVD/svc opcode or TE type stops further walking. */
     onParseWarning: ((info: ParseWarning) => void) | null = null;
 
@@ -369,7 +397,7 @@ export class MvdFrameParser {
                     this.parseMulticast(reader, cmd, extrabits);
                     break;
                 case MvdOp.Sound:
-                    this.skipSound(reader);
+                    this.parseSound(reader);
                     break;
                 case MvdOp.Print:
                     this.parsePrint(reader);
@@ -952,7 +980,7 @@ export class MvdFrameParser {
                     if (!this.parseMuzzleFlash(r, op === SvcOp.MuzzleFlash)) return;
                     break;
                 case SvcOp.Sound:
-                    if (!this.skipInnerSound(r)) return;
+                    if (!this.parseInnerSound(r)) return;
                     break;
                 case SvcOp.ConfigString: {
                     // Unicast configstring updates carry [u16 index][string]
@@ -1152,47 +1180,58 @@ export class MvdFrameParser {
         return [read1(), read1(), read1()];
     }
 
+    /** Decode the shared flags/index/vol/atten/ofs prefix of a sound packet. */
+    private readSoundHeader(r: BufferReader): { flags: number; index: number; volume: number; attenuation: number; timeOffset: number } {
+        const flags = r.readUInt8();
+        const index = this.extended && (flags & SND_INDEX16) ? r.readUInt16LE() : r.readUInt8();
+        const volume = flags & SND_VOLUME ? r.readUInt8() / 255 : 1;
+        const attenuation = flags & SND_ATTENUATION ? r.readUInt8() / 64 : 1;
+        const timeOffset = flags & SND_OFFSET ? r.readUInt8() / 1000 : 0;
+        return { flags, index, volume, attenuation, timeOffset };
+    }
+
     /**
-     * Consume one `svc_sound` inside a unicast/multicast payload. Same wire
-     * format as `CL_ParseStartSoundPacket` (src/client/parse.c): flags,
-     * index (16-bit when extended && SND_INDEX16), optional volume /
-     * attenuation / offset bytes, optional entity+channel word, optional
-     * position. Returns false when the payload is truncated so the caller
-     * stops walking that message safely.
+     * Consume one `svc_sound` inside a unicast/multicast payload and emit it
+     * via `onSound`. Same wire format as `CL_ParseStartSoundPacket`
+     * (src/client/parse.c): flags, index (16-bit when extended &&
+     * SND_INDEX16), optional volume / attenuation / offset bytes, optional
+     * entity+channel word (SND_ENT), optional position (SND_POS). Returns
+     * false when the payload is truncated so the caller stops walking that
+     * message safely.
      */
-    private skipInnerSound(r: BufferReader): boolean {
+    private parseInnerSound(r: BufferReader): boolean {
         if (r.remaining < 2) return false;
         try {
-            const flags = r.readUInt8();
-            if (this.extended && (flags & SND_INDEX16)) {
-                r.readUInt16LE();
-            } else {
-                r.readUInt8();
+            const head = this.readSoundHeader(r);
+            let entity = 0;
+            let channel = 0;
+            if (head.flags & SND_ENT) {
+                const sendchan = r.readUInt16LE();
+                entity = sendchan >> 3;
+                channel = sendchan & 7;
             }
-            if (flags & SND_VOLUME) r.readUInt8();
-            if (flags & SND_ATTENUATION) r.readUInt8();
-            if (flags & SND_OFFSET) r.readUInt8();
-            if (flags & SND_ENT) r.readUInt16LE();
-            if (flags & SND_POS) this.readPos(r);
+            const ev: SoundEvent = { ...head, entity, channel };
+            if (head.flags & SND_POS) {
+                ev.position = this.readPos(r);
+            }
+            this.onSound?.(ev);
         } catch {
             return false;
         }
         return true;
     }
 
-    private skipSound(reader: BufferReader): void {
+    private parseSound(reader: BufferReader): void {
         // MVD sound format (from MVD_ParseSound in parse.c):
-        // uint8 flags, [uint16|uint8] index, optional vol/atten/offset, uint16 sendchan
-        const flags = reader.readUInt8();
-        if (this.extended && (flags & SND_INDEX16)) {
-            reader.readUInt16LE();
-        } else {
-            reader.readUInt8();
-        }
-        if (flags & SND_VOLUME) reader.readUInt8();
-        if (flags & SND_ATTENUATION) reader.readUInt8();
-        if (flags & SND_OFFSET) reader.readUInt8();
-        reader.readUInt16LE(); // sendchan (entity+channel) — always present
+        // uint8 flags, [uint16|uint8] index, optional vol/atten/offset,
+        // uint16 sendchan — always present; never carries a position.
+        const head = this.readSoundHeader(reader);
+        const sendchan = reader.readUInt16LE();
+        this.onSound?.({
+            ...head,
+            entity: sendchan >> 3,
+            channel: sendchan & 7,
+        });
     }
 
     private parsePrint(reader: BufferReader): void {
