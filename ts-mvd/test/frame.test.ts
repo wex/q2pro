@@ -10,6 +10,7 @@ interface ParseResult {
     obits: ObituaryEvent[];
     deaths: DeathEvent[];
     parseErrors: unknown[];
+    parseWarnings: number;
 }
 
 function parseDemo(): ParseResult {
@@ -21,6 +22,7 @@ function parseDemo(): ParseResult {
         obits: [],
         deaths: [],
         parseErrors: [],
+        parseWarnings: 0,
     };
 
     const parser = new MvdFrameParser();
@@ -39,6 +41,7 @@ function parseDemo(): ParseResult {
     parser.onChat = (ev) => result.chats.push(ev);
     parser.onObituary = (ev) => result.obits.push(ev);
     parser.onDeath = (ev) => result.deaths.push({ ...ev, origin: [...ev.origin] as [number, number, number] });
+    parser.onParseWarning = () => result.parseWarnings++;
 
     const reader = new MvdDemoReader({ realtime: false });
     // Bypass the async drain path and feed messages synchronously into the parser.
@@ -118,6 +121,12 @@ describe('MvdFrameParser against demo.mvd2', () => {
                 expect(p.weaponTypeNum).toBeGreaterThan(0);
             }
         }
+    });
+
+    test('no parse warnings on the bundled demo (inner svc ops are walked)', () => {
+        // demo.mvd2 contains svc_sound inside multicast payloads; every inner
+        // op must be consumable without tripping the unknown-op bail-out.
+        expect(result.parseWarnings).toBe(0);
     });
 
     test('isMvdDummy is set only on the serverdata.clientNum slot', () => {
@@ -250,5 +259,124 @@ describe('MvdFrameParser misc', () => {
             expect(frames).toBeGreaterThan(0);
             resolve();
         }));
+    });
+});
+
+// ── Inner svc ops inside unicast/multicast payloads ────────────────
+
+function u16(v: number): Buffer { const b = Buffer.alloc(2); b.writeUInt16LE(v); return b; }
+function i16(v: number): Buffer { const b = Buffer.alloc(2); b.writeInt16LE(v); return b; }
+function u32(v: number): Buffer { const b = Buffer.alloc(4); b.writeUInt32LE(v); return b; }
+
+/** Wrap inner svc bytes in an mvd_multicast_all op (extrabits=0, no leafnum). */
+function mcastAll(payload: Buffer): Buffer {
+    return Buffer.concat([Buffer.from([0x0a, payload.length]), payload]);
+}
+
+// svc_temp_entity TE_BLOOD at raw pos [8,16,24] (→ world [1,2,3]), dir 0.
+const TE_BLOOD_VANILLA = Buffer.from([3, 1, 8, 0, 16, 0, 24, 0, 0]);
+// Same TE with ext2 delta-encoded coords (v = pos << 1, low bit clear).
+const TE_BLOOD_EXT2 = Buffer.from([3, 1, 16, 0, 32, 0, 48, 0, 0]);
+
+/**
+ * Minimal mvd_serverdata followed by an empty baseline frame.
+ * `flags` travel in the opcode extrabits for version < 2012, as a u16 word
+ * after `version` for >= 2012.
+ */
+function serverdataMsg(flags: number, version: number): Buffer {
+    const head = version >= 2012
+        ? Buffer.concat([Buffer.from([4]), u32(37), u16(version), u16(flags)])
+        : Buffer.concat([Buffer.from([4 | (flags << 5)]), u32(37), u16(version)]);
+    return Buffer.concat([
+        head,
+        u32(1),                 // servercount
+        Buffer.from('action\0'), // gamedir
+        i16(-1),                // clientNum (SinglePov: no dummy)
+        u16(0xffff),            // configstring terminator (>= csEnd)
+        Buffer.from([0, 0xff, 0, 0]), // empty baseline frame
+    ]);
+}
+
+describe('inner svc ops', () => {
+    function expectBlood(parser: MvdFrameParser): Array<{ type: number; position?: number[] }> {
+        const tes: Array<{ type: number; position?: number[] }> = [];
+        parser.onTempEntity = (ev) => tes.push({ type: ev.type, position: ev.position });
+        return tes;
+    }
+
+    test('svc_sound (flags 0) is skipped, following svc_temp_entity still parsed', () => {
+        const parser = new MvdFrameParser();
+        const tes = expectBlood(parser);
+        parser.parse(mcastAll(Buffer.concat([Buffer.from([9, 0, 7]), TE_BLOOD_VANILLA])));
+        expect(parser.parseWarningCount).toBe(0);
+        expect(tes).toEqual([{ type: 1, position: [1, 2, 3] }]);
+    });
+
+    test('svc_sound with SND_ENT and SND_POS consumes the right byte count', () => {
+        const parser = new MvdFrameParser();
+        const tes = expectBlood(parser);
+        // flags = ENT(8)|POS(4) → u8 index, u16 sendchan, 3x int16 pos.
+        const sound = Buffer.from([9, 12, 5, 0x10, 0x00, 64, 0, 128, 0, 192, 0]);
+        parser.parse(mcastAll(Buffer.concat([sound, TE_BLOOD_VANILLA])));
+        expect(parser.parseWarningCount).toBe(0);
+        expect(tes).toEqual([{ type: 1, position: [1, 2, 3] }]);
+    });
+
+    test('svc_sound with SND_VOLUME/ATTENUATION/OFFSET optional bytes', () => {
+        const parser = new MvdFrameParser();
+        const tes = expectBlood(parser);
+        // flags = VOL(1)|ATT(2)|OFS(16) → u8 index, then 3 optional u8s.
+        const sound = Buffer.from([9, 19, 5, 255, 64, 20]);
+        parser.parse(mcastAll(Buffer.concat([sound, TE_BLOOD_VANILLA])));
+        expect(parser.parseWarningCount).toBe(0);
+        expect(tes).toEqual([{ type: 1, position: [1, 2, 3] }]);
+    });
+
+    test('svc_sound SND_INDEX16 reads a u16 index on extended streams', () => {
+        const parser = new MvdFrameParser();
+        const tes = expectBlood(parser);
+        let ext = false;
+        parser.onServerData = (ev) => { ext = ev.extended; };
+        parser.parse(serverdataMsg(4, 2011)); // MVF_EXTLIMITS
+        expect(ext).toBe(true);
+        // flags = INDEX16(32)|ENT(8) → u16 index, u16 sendchan.
+        const sound = Buffer.from([9, 40, 0x34, 0x12, 0x10, 0x00]);
+        parser.parse(mcastAll(Buffer.concat([sound, TE_BLOOD_VANILLA])));
+        expect(parser.parseWarningCount).toBe(0);
+        expect(tes).toEqual([{ type: 1, position: [1, 2, 3] }]);
+    });
+
+    test('svc_sound SND_POS uses ext2 coords on extensions2 streams', () => {
+        const parser = new MvdFrameParser();
+        const tes = expectBlood(parser);
+        // MVF_EXTLIMITS(4)|MVF_EXTLIMITS_2(8) = 12, version 2012 → u16 flags word.
+        parser.parse(serverdataMsg(12, 2012));
+        // flags = INDEX16(32)|ENT(8)|POS(4): u16 index, u16 chan, 3x ext2 coord.
+        const sound = Buffer.from([9, 44, 0x34, 0x12, 0x10, 0x00, 16, 0, 32, 0, 48, 0]);
+        parser.parse(mcastAll(Buffer.concat([sound, TE_BLOOD_EXT2])));
+        expect(parser.parseWarningCount).toBe(0);
+        expect(tes).toEqual([{ type: 1, position: [1, 2, 3] }]);
+    });
+
+    test('truncated svc_sound stops the walk without crashing', () => {
+        const parser = new MvdFrameParser();
+        const tes = expectBlood(parser);
+        // flags = ENT|POS but the payload ends early → remaining svc ops lost.
+        parser.parse(mcastAll(Buffer.from([9, 12, 5])));
+        expect(tes).toEqual([]);
+        // Parser still usable on the next message.
+        parser.parse(mcastAll(TE_BLOOD_VANILLA));
+        expect(tes).toEqual([{ type: 1, position: [1, 2, 3] }]);
+    });
+
+    test('inner svc_configstring inside unicast fires onConfigString', () => {
+        const parser = new MvdFrameParser();
+        const events: Array<{ index: number; value: string }> = [];
+        parser.onConfigString = (ev) => events.push(ev);
+        // mvd_unicast (8): len u8, clientNum u8, payload.
+        const inner = Buffer.concat([Buffer.from([13]), u16(1312), Buffer.from('x\0')]);
+        const msg = Buffer.concat([Buffer.from([8, inner.length, 0]), inner]);
+        parser.parse(msg);
+        expect(events).toEqual([{ index: 1312, value: 'x' }]);
     });
 });

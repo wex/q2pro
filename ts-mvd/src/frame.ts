@@ -96,6 +96,8 @@ const MSG_PS_MOREBITS = 1 << 6;
 
 const SND_VOLUME = 1 << 0;
 const SND_ATTENUATION = 1 << 1;
+const SND_POS = 1 << 2;
+const SND_ENT = 1 << 3;
 const SND_OFFSET = 1 << 4;
 const SND_INDEX16 = 1 << 5;
 
@@ -949,6 +951,19 @@ export class MvdFrameParser {
                 case SvcOp.MuzzleFlash2:
                     if (!this.parseMuzzleFlash(r, op === SvcOp.MuzzleFlash)) return;
                     break;
+                case SvcOp.Sound:
+                    if (!this.skipInnerSound(r)) return;
+                    break;
+                case SvcOp.ConfigString: {
+                    // Unicast configstring updates carry [u16 index][string]
+                    // and describe global state (gi.configstring()) — only
+                    // the delivery was per-client. Same handling as the
+                    // top-level mvd_configstring op.
+                    const index = r.readUInt16LE();
+                    const value = r.readString();
+                    this.onConfigString?.({ index, value });
+                    break;
+                }
                 case SvcOp.StuffText:
                     // [string] — swallow and continue; harmless for observers.
                     r.readString();
@@ -1135,6 +1150,34 @@ export class MvdFrameParser {
             return r.readInt16LE() * (1 / 8);
         };
         return [read1(), read1(), read1()];
+    }
+
+    /**
+     * Consume one `svc_sound` inside a unicast/multicast payload. Same wire
+     * format as `CL_ParseStartSoundPacket` (src/client/parse.c): flags,
+     * index (16-bit when extended && SND_INDEX16), optional volume /
+     * attenuation / offset bytes, optional entity+channel word, optional
+     * position. Returns false when the payload is truncated so the caller
+     * stops walking that message safely.
+     */
+    private skipInnerSound(r: BufferReader): boolean {
+        if (r.remaining < 2) return false;
+        try {
+            const flags = r.readUInt8();
+            if (this.extended && (flags & SND_INDEX16)) {
+                r.readUInt16LE();
+            } else {
+                r.readUInt8();
+            }
+            if (flags & SND_VOLUME) r.readUInt8();
+            if (flags & SND_ATTENUATION) r.readUInt8();
+            if (flags & SND_OFFSET) r.readUInt8();
+            if (flags & SND_ENT) r.readUInt16LE();
+            if (flags & SND_POS) this.readPos(r);
+        } catch {
+            return false;
+        }
+        return true;
     }
 
     private skipSound(reader: BufferReader): void {
