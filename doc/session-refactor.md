@@ -21,7 +21,10 @@ pak index, BSP cache, HTTP routes — stay in `app.ts`.
   once at construction. This replaces the `origOnFrame`/`origOnFrame2`
   wrapper chain that accreted in `app.ts`.
 - `snapshot()` — the `/events` snapshot payload.
-- `mode` — `'replay' | 'live' | 'idle'`.
+- `mode` — `'replay' | 'live' | 'idle'`. An armed auto-reconnect timer
+  (`client.reconnectPending`) counts as `live`.
+- `dispose()` — full teardown (replay, client, timers, recorder); the
+  session is unusable afterwards. See `doc/client-lifecycle.md`.
 
 ## Boundary
 

@@ -6,6 +6,7 @@ import {
     MVD_MAGIC,
     GTV_PROTOCOL_VERSION,
     MAX_GTS_MSGLEN,
+    MAX_GTC_MSGLEN,
     GTF_STRINGCMDS,
     GTF_DEFLATE,
     GtvServerOp,
@@ -113,6 +114,15 @@ export class MvdClient extends EventEmitter {
         return this.negotiatedFlags;
     }
 
+    /**
+     * True while an auto-reconnect back-off timer is armed — the client
+     * reports `state === Disconnected` but will reconnect soon. Treat as
+     * "live" for live/replay exclusivity checks.
+     */
+    get reconnectPending(): boolean {
+        return this.reconnectTimer !== null;
+    }
+
     // ── Public API ──────────────────────────────────────────────────
 
     /**
@@ -132,6 +142,15 @@ export class MvdClient extends EventEmitter {
     connect(): void {
         if (this._state !== ClientState.Disconnected) {
             return;
+        }
+        // A manual connect during auto-reconnect back-off wins: cancel the
+        // pending timer so it cannot fire into the new connection later.
+        // (The timer clears itself before calling connect(), so this only
+        // ever fires for external callers.)
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+            this.isAutoReconnect = false;
         }
         this.destroyed = false;
         this.closeEmitted = false;
@@ -275,6 +294,9 @@ export class MvdClient extends EventEmitter {
                 }
                 this.recvBuf = this.recvBuf.subarray(4);
                 this.emit('connect');
+                // A listener may have torn the client down (disconnect()
+                // inside 'connect') — do not continue the handshake.
+                if (this.destroyed || !this.socket) return;
                 this.sendHello();
                 continue;
             }
@@ -393,6 +415,10 @@ export class MvdClient extends EventEmitter {
         }
 
         this.emit('hello', this.negotiatedFlags);
+        // A listener may have torn the client down inside 'hello' —
+        // bailing here avoids resurrecting state (ready + ping timer)
+        // on a dead socket, which previously wedged the client.
+        if (this.destroyed || !this.socket) return;
         this.setState(ClientState.Preparing);
 
         this.sendStreamStart();
@@ -439,6 +465,7 @@ export class MvdClient extends EventEmitter {
 
     private handleStreamStop(): void {
         this.emit('streamStop');
+        if (this.destroyed || !this.socket) return;
         this.setState(ClientState.Preparing);
     }
 
@@ -488,6 +515,17 @@ export class MvdClient extends EventEmitter {
         const payloadLen = payload ? payload.length : 0;
         const msgLen = 1 + payloadLen; // opcode byte + payload
 
+        // The server drops the connection on > MAX_GTC_MSGLEN (256) —
+        // surface it locally instead of silently killing the session.
+        if (msgLen > MAX_GTC_MSGLEN) {
+            this.emitError({
+                code: 'OVERSIZE',
+                message: `Outbound GTV message too large: ${msgLen} > ${MAX_GTC_MSGLEN}`,
+            });
+            return;
+        }
+        if (!this.socket || this.socket.destroyed) return;
+
         const header = Buffer.allocUnsafe(3);
         header.writeUInt16LE(msgLen, 0);
         header.writeUInt8(opcode, 2);
@@ -516,6 +554,7 @@ export class MvdClient extends EventEmitter {
     // ── Keepalive ───────────────────────────────────────────────────
 
     private startPingTimer(): void {
+        if (!this.socket) return;
         this.stopPingTimer();
         this.pingTimer = setInterval(() => {
             this.sendPing();

@@ -493,6 +493,11 @@ export class Session {
     }
 
     startReplay(filePath: string): void {
+        // A pending auto-reconnect back-off must not outlive the switch to
+        // replay — disconnect() clears the timer (and is a no-op when the
+        // socket is already gone). Live connections are rejected upstream
+        // by the route's state check.
+        this.client.disconnect();
         this.resetPipelineState();
         const reader = new MvdDemoReader({ realtime: true, tickMs: 100 });
         this.currentReplay = reader;
@@ -586,6 +591,28 @@ export class Session {
     /** Mode for /state: replay beats live, live beats idle. */
     get mode(): 'replay' | 'live' | 'idle' {
         if (this.currentReplay) return 'replay';
-        return this.client.state === ClientState.Disconnected ? 'idle' : 'live';
+        // A scheduled auto-reconnect still counts as live — the client
+        // will be back shortly, so the UI should not offer the session
+        // modal nor let /replay slip in without cancelling it.
+        if (this.client.state === ClientState.Disconnected && !this.client.reconnectPending) {
+            return 'idle';
+        }
+        return 'live';
+    }
+
+    /**
+     * Release every owned resource: live socket + ping/reconnect timers,
+     * stats broadcast timer, replay reader, recorder fd. The session is
+     * unusable afterwards (client listeners are removed).
+     */
+    dispose(): void {
+        this.stopReplay();
+        this.client.disconnect();
+        this.client.removeAllListeners();
+        if (this.statsTimer) {
+            clearTimeout(this.statsTimer);
+            this.statsTimer = null;
+        }
+        this.recorder.close();
     }
 }

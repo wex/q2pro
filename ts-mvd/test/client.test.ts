@@ -44,7 +44,7 @@ jest.mock('net', () => {
 // Import after the mock is in place.
 import * as zlib from 'node:zlib';
 import { MvdClient } from '../src/client';
-import { ClientState, MVD_MAGIC, GtvServerOp, GtvClientOp, GTV_PROTOCOL_VERSION, GTF_DEFLATE } from '../src/protocol';
+import { ClientState, MVD_MAGIC, GtvServerOp, GtvClientOp, GTV_PROTOCOL_VERSION, GTF_DEFLATE, GTF_STRINGCMDS } from '../src/protocol';
 import { BufferWriter } from '../src/buffer';
 
 function makeClient() {
@@ -288,6 +288,79 @@ describe('MvdClient state machine', () => {
         const c = make();
         c.sendStreamStart();
         expect(c.state).toBe(ClientState.Disconnected);
+    });
+
+    test('disconnect() inside a hello listener does not wedge the client', () => {
+        const c = make();
+        const states: ClientState[] = [];
+        c.on('stateChange', (ev) => states.push(ev.to));
+        c.on('hello', () => c.disconnect());
+        c.connect();
+        const sock = lastSocket.instance!;
+        sock.emit('connect');
+        sock.emit('data', Buffer.from('MVD2', 'ascii'));
+        sock.emit('data', framedMessage(GtvServerOp.Hello, Buffer.alloc(4)));
+        // Previously: setState(Preparing) + sendStreamStart revived a dead
+        // client to 'ready' with a leaked ping timer.
+        expect(c.state).toBe(ClientState.Disconnected);
+        expect(states).not.toContain(ClientState.Ready);
+        // And the client must be usable again.
+        c.connect();
+        expect(c.state).toBe(ClientState.Connecting);
+        expect(lastSocket.instance).not.toBe(sock);
+        expect(lastSocket.instance!.connectArgs).toHaveLength(1);
+    });
+
+    test('disconnect() inside a connect listener does not wedge the client', () => {
+        const c = make();
+        c.on('connect', () => c.disconnect());
+        c.connect();
+        const sock = lastSocket.instance!;
+        sock.emit('connect');
+        sock.emit('data', Buffer.from('MVD2', 'ascii'));
+        // sendHello() must not have run after the teardown.
+        expect(c.state).toBe(ClientState.Disconnected);
+        expect(sock.writes.some((w) => w.length >= 3 && w[2] === GtvClientOp.Hello)).toBe(false);
+        c.connect();
+        expect(c.state).toBe(ClientState.Connecting);
+    });
+
+    test('reconnectPending is visible during back-off and manual connect cancels it', () => {
+        const c = new MvdClient({
+            host: 'test.local', port: 27999, autoReconnect: true, reconnectDelay: 60000,
+        });
+        created.push(c);
+        c.connect();
+        const sock = lastSocket.instance!;
+        sock.emit('connect');
+        expect(c.reconnectPending).toBe(false);
+        sock.emit('close'); // drop → back-off armed
+        expect(c.state).toBe(ClientState.Disconnected);
+        expect(c.reconnectPending).toBe(true);
+        // A manual connect during back-off cancels the pending timer.
+        c.connect();
+        expect(c.reconnectPending).toBe(false);
+        expect(c.state).toBe(ClientState.Connecting);
+    });
+
+    test('oversize outbound GTV message is rejected, not written', () => {
+        const c = make();
+        const errors: string[] = [];
+        c.on('error', (e) => errors.push(e.code));
+        c.connect();
+        const sock = lastSocket.instance!;
+        sock.emit('connect');
+        sock.emit('data', Buffer.from('MVD2', 'ascii'));
+        const flags = Buffer.alloc(4);
+        flags.writeUInt32LE(GTF_STRINGCMDS, 0);
+        sock.emit('data', framedMessage(GtvServerOp.Hello, flags));
+        sock.emit('data', framedMessage(GtvServerOp.StreamStart, Buffer.alloc(0)));
+        expect(c.state).toBe(ClientState.Streaming);
+        const writesBefore = sock.writes.length;
+        // MAX_GTC_MSGLEN = 256; a 300-byte stringcmd exceeds it.
+        c.sendStringCmd('x'.repeat(300));
+        expect(errors).toContain('OVERSIZE');
+        expect(sock.writes.length).toBe(writesBefore);
     });
 
     test('BadRequest hard-disconnects and does not auto-reconnect', () => {

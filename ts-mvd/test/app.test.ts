@@ -21,7 +21,7 @@ jest.mock('net', () => ({
     },
 }));
 
-import { httpServer, resetAppStateForTests, DEMOS_DIR, parser, getScoreboardForTests, getPlayersForTests, sseClients, sseHeartbeatTick, isStatusReplySource } from '../src/app';
+import { httpServer, resetAppStateForTests, DEMOS_DIR, parser, client, getScoreboardForTests, getPlayersForTests, sseClients, sseHeartbeatTick, isStatusReplySource } from '../src/app';
 import { PlayerState } from '../src/frame';
 import { Stat, MvdOp, GtvServerOp } from '../src/protocol';
 import { buildSynthBsp } from './helpers/fixtures';
@@ -353,6 +353,32 @@ describe('HTTP control surface', () => {
         expect(r2.body.error).toBe('replay-active');
 
         await request(httpServer).delete('/replay').expect(204);
+    });
+
+    test('POST /replay during auto-reconnect back-off cancels the pending reconnect', async () => {
+        const sock = await driveToStreaming();
+        // Drop the live connection → auto-reconnect arms a 5s back-off.
+        sock.emit('close');
+        expect(client.reconnectPending).toBe(true);
+
+        const res = await request(httpServer).post('/replay?file=demo.mvd2');
+        expect(res.status).toBe(202);
+        // startReplay must have torn the pending timer down — otherwise the
+        // back-off would fire into the same parser the replay feeds.
+        expect(client.reconnectPending).toBe(false);
+
+        const state = await request(httpServer).get('/state');
+        expect(state.body.mode).toBe('replay');
+        await request(httpServer).delete('/replay').expect(204);
+    });
+
+    test('GET /state reports live while a reconnect is pending', async () => {
+        const sock = await driveToStreaming();
+        sock.emit('close');
+        expect(client.reconnectPending).toBe(true);
+        const res = await request(httpServer).get('/state');
+        expect(res.body.mode).toBe('live');
+        await request(httpServer).post('/disconnect').expect(204);
     });
 
     describe('SSE hygiene', () => {

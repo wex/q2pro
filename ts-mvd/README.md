@@ -201,15 +201,25 @@ check `client.flags & GTF_DEFLATE` for the negotiated state.
 
 ### Methods
 
-- **`connect()`** — Initiate TCP connection and handshake
-- **`disconnect()`** — Close connection (emits `close`; no auto-reconnect)
+- **`connect()`** — Initiate TCP connection and handshake. Calling it during
+  auto-reconnect back-off cancels the pending timer and dials immediately.
+- **`disconnect()`** — Close connection (emits `close`; no auto-reconnect).
+  Safe to call from inside any event listener — internal handlers bail out
+  rather than resurrecting state on a dead socket.
 - **`setTarget(host, port, password?)`** — Update GTV target while disconnected
 - **`sendPing()`** — Send keepalive ping
 - **`sendStringCmd(cmd)`** — Forward a command to the game server
 - **`sendStreamStart()`** — Request stream start
 - **`sendStreamStop()`** — Request stream stop
 
+Outbound GTV messages are capped at `MAX_GTC_MSGLEN` (256 bytes incl. opcode) —
+larger sends emit an `OVERSIZE` error and are dropped instead of provoking a
+server-side disconnect.
+
 ### Properties
 
 - **`state`** — Current `ClientState`
 - **`flags`** — Negotiated GTV flags after hello
+- **`reconnectPending`** — `true` while an auto-reconnect back-off timer is
+  armed (`state` reports `disconnected` but a reconnect is scheduled). Treat
+  as "live" for live/replay exclusivity checks; `Session.mode` does this.
