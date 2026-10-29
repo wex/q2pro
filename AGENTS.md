@@ -51,8 +51,8 @@ Run from `ts-mvd/`:
 Requires Node.js 20+ (matches `@types/node` ^20).
 
 ## Dependencies
-- Dev: `typescript` ^5.4, `ts-node` ^10.9, `@types/node` ^20, `jest` ^29, `ts-jest` ^29, `@types/jest` ^29, `supertest` ^7, `@types/supertest` ^7.
-- Runtime: `tsx` ^4.21.
+- Dev: `typescript` ^5.4, `ts-node` ^10.9, `tsx` ^4.21, `@types/node` ^20, `jest` ^29, `ts-jest` ^29, `@types/jest` ^29, `supertest` ^7, `@types/supertest` ^7.
+- Runtime: none — the library has no production dependencies.
 - Prefer versions already in `ts-mvd/package.json`; avoid adding dependencies without a clear reason.
 
 ## Testing & verification
