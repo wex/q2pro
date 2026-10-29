@@ -1,4 +1,5 @@
 import * as dgram from 'node:dgram';
+import * as dns from 'node:dns';
 import * as http from 'node:http';
 import * as net from 'node:net';
 import * as fs from 'node:fs';
@@ -54,7 +55,43 @@ sseHeartbeat.unref();
 
 const udpSock = dgram.createSocket('udp4');
 
+/**
+ * The status query target we most recently polled, plus the addresses it
+ * resolved to (`ips === null` while a hostname lookup is still in flight —
+ * replies in that window fall back to the port check, see
+ * isStatusReplySource). `session` is the Session that initiated the poll,
+ * so replies land on the right `latestStatus`.
+ */
+const statusPoll = {
+    host: '',
+    port: 0,
+    session: null as Session | null,
+    ips: null as Set<string> | null,
+};
+
+/** Resolve the poll target's addresses for reply attribution. */
+export function resolveStatusTargetIps(targetHost: string, targetPort: number): Promise<void> {
+    statusPoll.host = targetHost;
+    statusPoll.port = targetPort;
+    if (net.isIP(targetHost)) {
+        statusPoll.ips = new Set([targetHost]);
+        return Promise.resolve();
+    }
+    statusPoll.ips = null;
+    return new Promise((resolve) => {
+        dns.lookup(targetHost, { all: true }, (err, addrs) => {
+            if (!err && statusPoll.host === targetHost && statusPoll.port === targetPort) {
+                statusPoll.ips = new Set(addrs.map((a) => a.address));
+            }
+            resolve();
+        });
+    });
+}
+
 function sendOOBStatus(targetHost: string, targetPort: number): void {
+    statusPoll.session =
+        [...sessions.values()].find((s) => s.host === targetHost && s.port === targetPort) ?? null;
+    void resolveStatusTargetIps(targetHost, targetPort);
     const header = Buffer.alloc(4, 0xff);
     const payload = Buffer.from('status\n', 'ascii');
     const packet = Buffer.concat([header, payload]);
@@ -63,18 +100,26 @@ function sendOOBStatus(targetHost: string, targetPort: number): void {
 
 /**
  * True when `rinfo` plausibly answers the status query sent to
- * `targetHost:targetPort` (defaults to the default session's target). The
- * port must match the polled server; when the host is an IP literal the
- * sender address must match too (hostname targets rely on the port check —
- * comparing would need a DNS lookup).
+ * `targetHost:targetPort` (defaults to the last polled target). The port
+ * must match; for an IP-literal host the sender address must match too.
+ * For a hostname target the resolved address set is enforced once the
+ * lookup has landed — until then the port check alone gates replies (a
+ * brief window, documented in doc/app-hardening.md).
  */
 export function isStatusReplySource(
     rinfo: { port: number; address: string },
-    targetHost = sessions.get('default')!.host,
-    targetPort = sessions.get('default')!.port,
+    targetHost = statusPoll.host || sessions.get('default')!.host,
+    targetPort = statusPoll.port || sessions.get('default')!.port,
 ): boolean {
     if (rinfo.port !== targetPort) return false;
-    if (net.isIP(targetHost) && rinfo.address !== targetHost) return false;
+    if (net.isIP(targetHost)) return rinfo.address === targetHost;
+    if (
+        statusPoll.host === targetHost &&
+        statusPoll.port === targetPort &&
+        statusPoll.ips !== null
+    ) {
+        return statusPoll.ips.has(rinfo.address);
+    }
     return true;
 }
 
@@ -152,9 +197,10 @@ udpSock.on('message', (msg: Buffer, rinfo: dgram.RemoteInfo) => {
         }
     }
 
-    defaultSession.latestStatus = { serverinfo, players: statusPlayers };
+    const session = statusPoll.session ?? defaultSession;
+    session.latestStatus = { serverinfo, players: statusPlayers };
     console.log(`[status] ${statusPlayers.length} player(s) in server info`);
-    sseBroadcast('status', { session: defaultSession.id, ...defaultSession.latestStatus });
+    sseBroadcast('status', { session: session.id, ...session.latestStatus });
 });
 
 udpSock.on('error', (err) => {
@@ -319,8 +365,98 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
     res.end(JSON.stringify(body));
 }
 
+// ── Request guards (CSRF / DNS-rebinding hardening) ─────────────
+//
+// The control surface can open outbound connections (/connect) and write
+// files (/record/*), so it must not be drivable from an arbitrary web page.
+// Two cheap checks close that: a Host allow-list (stops DNS-rebinding reads
+// *and* writes) and an Origin allow-list on requests that carry one.
+//
+// `new URL()` needs a syntactically valid base — a constant one also makes
+// the host part of req.url irrelevant, which it already was (routing only
+// ever reads pathname/searchParams).
+const URL_BASE = 'http://ts-mvd.invalid';
+
+const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
+// Operator-extended allow-list for non-local binds (comma-separated names).
+const EXTRA_ALLOWED_HOSTS = new Set(
+    (process.env.HTTP_ALLOWED_HOSTS || '')
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean),
+);
+
+function hostNameAllowed(name: string): boolean {
+    let n = name.toLowerCase();
+    if (n.endsWith('.')) n = n.slice(0, -1); // FQDN trailing dot
+    return LOCAL_HOSTNAMES.has(n) || n === HTTP_HOST.toLowerCase() || EXTRA_ALLOWED_HOSTS.has(n);
+}
+
+/** Strip the port from a Host header value; returns the bare name or null. */
+function parseHostHeader(host: string): string | null {
+    const h = host.trim();
+    if (!h) return null;
+    const v6 = h.match(/^\[([0-9a-fA-F:]+)\](?::\d+)?$/);
+    if (v6) return v6[1];
+    if (h.includes('[') || (h.match(/:/g) ?? []).length > 1) return null; // junk / unbracketed v6
+    const colon = h.lastIndexOf(':');
+    const name = colon === -1 ? h : h.slice(0, colon);
+    if (!name || /[\s/?#@]/.test(name)) return null;
+    return name;
+}
+
+/** DNS-rebinding guard: the Host header must name this server. */
+function requestHostAllowed(req: http.IncomingMessage): boolean {
+    const host = req.headers.host;
+    if (host === undefined) return true; // HTTP/1.0 — a browser always sends Host
+    const name = parseHostHeader(host);
+    return name !== null && hostNameAllowed(name);
+}
+
+/** CSRF guard: a present Origin must resolve to an allowed host. */
+function requestOriginAllowed(req: http.IncomingMessage): boolean {
+    const origin = req.headers.origin;
+    if (origin === undefined || origin === 'null') return true;
+    try {
+        const o = new URL(origin);
+        if (o.protocol !== 'http:' && o.protocol !== 'https:') return false;
+        return hostNameAllowed(o.hostname);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * JSON routes require `Content-Type: application/json` when a body is sent
+ * (browsers can only produce it via fetch+CORS-safe request, so this also
+ * hardens against form POSTs). Bodyless posts stay allowed for curl.
+ */
+function jsonContentTypeOk(req: http.IncomingMessage): boolean {
+    const hasBody =
+        (req.headers['content-length'] ?? '0') !== '0' ||
+        req.headers['transfer-encoding'] !== undefined;
+    if (!hasBody) return true;
+    const ct = req.headers['content-type'];
+    if (!ct) return false;
+    return ct.split(';', 1)[0].trim().toLowerCase() === 'application/json';
+}
+
 const httpServer = http.createServer((req, res) => {
-    const url = new URL(req.url || '/', `http://${req.headers.host}`);
+    if (!requestHostAllowed(req)) {
+        sendJson(res, 403, { error: 'forbidden-host' });
+        return;
+    }
+    if (!requestOriginAllowed(req)) {
+        sendJson(res, 403, { error: 'forbidden-origin' });
+        return;
+    }
+    let url: URL;
+    try {
+        url = new URL(req.url || '/', URL_BASE);
+    } catch {
+        sendJson(res, 400, { error: 'bad-request' });
+        return;
+    }
 
     // Control endpoints
     if (url.pathname === '/connect' && req.method === 'POST') {
@@ -332,6 +468,11 @@ const httpServer = http.createServer((req, res) => {
         }
         if (session.client.state !== ClientState.Disconnected) {
             sendJson(res, 409, { error: 'already-connected', state: session.client.state });
+            return;
+        }
+        if (!jsonContentTypeOk(req)) {
+            sendJson(res, 415, { error: 'unsupported-media-type' });
+            req.resume();
             return;
         }
         readJsonBody(req).then((body) => {
@@ -451,6 +592,11 @@ const httpServer = http.createServer((req, res) => {
         if (!session) return;
         if (!session.currentReplay) {
             sendJson(res, 409, { error: 'no-replay' });
+            return;
+        }
+        if (!jsonContentTypeOk(req)) {
+            sendJson(res, 415, { error: 'unsupported-media-type' });
+            req.resume();
             return;
         }
         readJsonBody(req).then((body) => {
@@ -617,6 +763,8 @@ const httpServer = http.createServer((req, res) => {
 
     // GET /events (SSE)
     if (url.pathname === '/events') {
+        const session = sessionFor(url, res);
+        if (!session) return;
         res.writeHead(200, {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
@@ -625,7 +773,7 @@ const httpServer = http.createServer((req, res) => {
         res.write('\n');
 
         // Send current state snapshot
-        res.write(`event: snapshot\ndata: ${JSON.stringify(defaultSession.snapshot())}\n\n`);
+        res.write(`event: snapshot\ndata: ${JSON.stringify(session.snapshot())}\n\n`);
 
         sseClients.add(res);
         req.on('close', () => sseClients.delete(res));

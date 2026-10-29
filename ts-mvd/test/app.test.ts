@@ -21,7 +21,7 @@ jest.mock('net', () => ({
     },
 }));
 
-import { httpServer, resetAppStateForTests, DEMOS_DIR, parser, client, getScoreboardForTests, getPlayersForTests, sseClients, sseHeartbeatTick, isStatusReplySource } from '../src/app';
+import { httpServer, resetAppStateForTests, DEMOS_DIR, parser, client, getScoreboardForTests, getPlayersForTests, sseClients, sseHeartbeatTick, isStatusReplySource, resolveStatusTargetIps } from '../src/app';
 import { PlayerState } from '../src/frame';
 import { Stat, MvdOp, GtvServerOp } from '../src/protocol';
 import { buildSynthBsp } from './helpers/fixtures';
@@ -576,8 +576,79 @@ describe('HTTP control surface', () => {
         test('drops replies from a different address when host is an IP literal', () => {
             expect(isStatusReplySource({ port: 27910, address: '10.0.0.9' }, '127.0.0.1', 27910)).toBe(false);
         });
-        test('accepts any address when host is a hostname (port match only)', () => {
-            expect(isStatusReplySource({ port: 27910, address: '10.0.0.9' }, 'gtv.example.com', 27910)).toBe(true);
+        test('hostname target: falls back to port-only while unresolved', () => {
+            // 'unpolled.example' was never resolved — the pre-lookup window
+            // keeps the old port-only semantics.
+            expect(isStatusReplySource({ port: 27910, address: '10.0.0.9' }, 'unpolled.example', 27910)).toBe(true);
+        });
+        test('hostname target: resolved set is enforced once lookup lands', async () => {
+            await resolveStatusTargetIps('localhost', 27910);
+            expect(isStatusReplySource({ port: 27910, address: '127.0.0.1' }, 'localhost', 27910)).toBe(true);
+            expect(isStatusReplySource({ port: 27910, address: '10.0.0.9' }, 'localhost', 27910)).toBe(false);
+        });
+    });
+
+    describe('request hardening', () => {
+        test('malformed Host header is rejected, not crashed', async () => {
+            // AUDIT-2 bug 5: `new URL(..., `http://${host}`)` threw Invalid
+            // URL on garbage like `a b` and took the process down.
+            const res = await request(httpServer).get('/state').set('Host', 'a b');
+            expect(res.status).toBe(403);
+            expect(res.body.error).toBe('forbidden-host');
+        });
+
+        test('foreign Host header (DNS rebinding) is rejected', async () => {
+            const res = await request(httpServer).get('/state').set('Host', 'evil.example.com');
+            expect(res.status).toBe(403);
+            expect(res.body.error).toBe('forbidden-host');
+        });
+
+        test('localhost Host variants pass', async () => {
+            for (const host of ['localhost:8080', '127.0.0.1', '[::1]:8080']) {
+                const res = await request(httpServer).get('/state').set('Host', host);
+                expect(res.status).toBe(200);
+            }
+        });
+
+        test('cross-origin Origin on a mutating POST is rejected', async () => {
+            const res = await request(httpServer)
+                .post('/connect')
+                .set('Origin', 'http://evil.example.com')
+                .set('content-type', 'application/json')
+                .send({});
+            expect(res.status).toBe(403);
+            expect(res.body.error).toBe('forbidden-origin');
+        });
+
+        test('same-origin Origin is allowed', async () => {
+            const res = await request(httpServer)
+                .post('/connect')
+                .set('Origin', 'http://localhost:8080')
+                .set('content-type', 'application/json')
+                .send({ host: '127.0.0.1', port: 27910 });
+            expect(res.status).toBe(202);
+            await request(httpServer).post('/disconnect').expect(204);
+        });
+
+        test('non-JSON Content-Type with a body is 415 on /connect', async () => {
+            const res = await request(httpServer)
+                .post('/connect')
+                .set('content-type', 'text/plain')
+                .send('host=evil.example.com');
+            expect(res.status).toBe(415);
+            expect(res.body.error).toBe('unsupported-media-type');
+        });
+
+        test('bodyless POST /connect still works (curl-friendly)', async () => {
+            const res = await request(httpServer).post('/connect');
+            expect(res.status).toBe(202);
+            await request(httpServer).post('/disconnect').expect(204);
+        });
+
+        test('GET /events honours ?session= and 404s unknown sessions', async () => {
+            const res = await request(httpServer).get('/events?session=nope').buffer(true);
+            expect(res.status).toBe(404);
+            expect(res.body.error).toBe('unknown-session');
         });
     });
 

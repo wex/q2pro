@@ -111,6 +111,20 @@ events used by the map overlay FX, and `doc/player-loadout.md` for
 scoreboard HP / weapon / ammo enrichment (stream roster vs sticky
 loadout).
 
+### Request guards
+
+The surface binds to `127.0.0.1` by default (`HTTP_HOST`/`HTTP_PORT` to
+change) and enforces two cheap guards on every request — see
+`doc/app-hardening.md`:
+
+- `Host` must be `localhost`/`127.0.0.1`/`[::1]`, the bind address, or a
+  name in `HTTP_ALLOWED_HOSTS` (comma-separated) — DNS-rebinding requests
+  get `403 forbidden-host`.
+- A present `Origin` must point at the same allow-list — cross-origin
+  browser requests get `403 forbidden-origin`.
+- JSON endpoints (`/connect`, `/replay/control`) require
+  `Content-Type: application/json` when a body is sent — `415` otherwise.
+
 ## Pak / Pkz asset fallback
 
 Drop original Quake 2 `.pak` archives or Q2Pro `.pkz` (zip) archives into
