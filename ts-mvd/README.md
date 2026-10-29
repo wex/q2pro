@@ -105,9 +105,11 @@ curl           http://localhost:8080/stats     # per-round K/D / hit locations /
 
 See `doc/demo-replay.md` for the full endpoint and event reference,
 `doc/session-stats.md` for the `stats` SSE event and round detection,
-`doc/combat-fx.md` for the `flash` / `damage` SSE events used by the
-map overlay FX, and `doc/player-loadout.md` for scoreboard HP / weapon /
-ammo enrichment (stream roster vs sticky loadout).
+`doc/aq2-obituaries.md` for kill-feed attribution (`ObituaryEvent.kind` /
+`mod` / `location`), `doc/combat-fx.md` for the `flash` / `damage` SSE
+events used by the map overlay FX, and `doc/player-loadout.md` for
+scoreboard HP / weapon / ammo enrichment (stream roster vs sticky
+loadout).
 
 ## Pak / Pkz asset fallback
 

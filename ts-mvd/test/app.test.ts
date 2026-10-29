@@ -459,7 +459,7 @@ describe('HTTP control surface', () => {
             // Old layout: playerskins base 1312 → "name\skin".
             parser.onConfigString!({ index: 1312 + 0, value: 'Alice\\male' });
             parser.onConfigString!({ index: 1312 + 1, value: 'Bob\\male' });
-            parser.onObituary!({ victim: 'Bob', attacker: 'Alice', weapon: 'sniper', raw: 'x' });
+            parser.onObituary!({ victim: 'Bob', attacker: 'Alice', weapon: 'sniper', raw: 'x', kind: 'kill', mod: 'sniper', location: null });
             parser.onDeath!({ clientNum: 1, origin: [0, 0, 0] });
             parser.onHit!({ attacker: 0, victim: 'Bob', location: 'head', raw: 'x' });
 
@@ -475,9 +475,9 @@ describe('HTTP control surface', () => {
         });
 
         test('round boundary text splits rounds', async () => {
-            parser.onObituary!({ victim: 'Bob', attacker: 'Alice', weapon: 'mk23', raw: 'x' });
+            parser.onObituary!({ victim: 'Bob', attacker: 'Alice', weapon: 'mk23', raw: 'x', kind: 'kill', mod: 'mk23', location: null });
             parser.onCenterPrint!({ clientNum: 0, text: 'FIGHT!' });
-            parser.onObituary!({ victim: 'Alice', attacker: 'Bob', weapon: 'mk23', raw: 'x' });
+            parser.onObituary!({ victim: 'Alice', attacker: 'Bob', weapon: 'mk23', raw: 'x', kind: 'kill', mod: 'mk23', location: null });
             const res = await request(httpServer).get('/stats');
             expect(res.body.rounds).toHaveLength(2);
         });
@@ -489,7 +489,7 @@ describe('HTTP control surface', () => {
             fake.writableLength = 0;
             fake.end = jest.fn();
             sseClients.add(fake);
-            parser.onObituary!({ victim: 'Bob', attacker: 'Alice', weapon: 'sniper', raw: 'x' });
+            parser.onObituary!({ victim: 'Bob', attacker: 'Alice', weapon: 'sniper', raw: 'x', kind: 'kill', mod: 'sniper', location: null });
             const ev = w.find((x) => x.startsWith('event: stats'));
             expect(ev).toBeDefined();
             const snap = JSON.parse(ev!.split('data: ')[1]);

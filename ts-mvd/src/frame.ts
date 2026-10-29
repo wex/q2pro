@@ -1,4 +1,5 @@
 import { BufferReader } from './buffer';
+import { classifyAq2Obituary, ObituaryKind, HitLocationKind } from './aq2-obituaries';
 import {
     MvdOp,
     MvdFlags,
@@ -205,6 +206,18 @@ export interface ObituaryEvent {
     /** Coarse weapon/mod token parsed from the template, or null. */
     weapon: string | null;
     raw: string;
+    /**
+     * 'kill' = credited kill (victim + attacker);
+     * 'world' = environmental death (no attacker);
+     * 'suicide' = self-inflicted (no attacker);
+     * 'info' = not a death line at all — PRINT_MEDIUM carries non-obituary
+     * notices (bot nav, renames). `victim === ''` for 'info'.
+     */
+    kind: ObituaryKind;
+    /** MOD_*-derived token (mk23, knife_thrown, falling, ...) or null. */
+    mod: string | null;
+    /** Hit location when the template encodes one, else null. */
+    location: HitLocationKind | null;
 }
 
 export interface HitEvent {
@@ -1410,31 +1423,45 @@ export function classifyChat(text: string): ChatEvent {
 export function classifyObituary(text: string): ObituaryEvent {
     const raw = stripTrailingNewline(text);
 
+    // AQ2/TNG table first — it is the target mod and its templates are
+    // enumerated exhaustively (src/action/p_client.c ClientObituary).
+    const aq2 = classifyAq2Obituary(raw);
+    if (aq2) {
+        return {
+            victim: aq2.victim,
+            attacker: aq2.attacker,
+            weapon: aq2.mod,
+            raw,
+            kind: aq2.kind,
+            mod: aq2.mod,
+            location: aq2.location,
+        };
+    }
+
     // Suicides / world kills: "VICTIM killed himself", "VICTIM died."
     let m = raw.match(/^(.+?) killed (?:him|her|them|it)self\b/);
-    if (m) return { victim: m[1], attacker: null, weapon: 'suicide', raw };
+    if (m) return { victim: m[1], attacker: null, weapon: 'suicide', raw, kind: 'suicide', mod: 'suicide', location: null };
 
     m = raw.match(/^(.+?) tried to put the pin back in\b/);
-    if (m) return { victim: m[1], attacker: null, weapon: 'grenade', raw };
+    if (m) return { victim: m[1], attacker: null, weapon: 'grenade', raw, kind: 'world', mod: 'held_grenade', location: null };
 
     m = raw.match(/^(.+?) (?:fell|melted|does a back flip into the lava|cratered|blew up)\b/);
-    if (m) return { victim: m[1], attacker: null, weapon: 'world', raw };
+    if (m) return { victim: m[1], attacker: null, weapon: 'world', raw, kind: 'world', mod: 'world', location: null };
 
-    // Canonical AQ2/TNG: "VICTIM was <verb> by ATTACKER's WEAPON"
+    // Vanilla Q2: "VICTIM was <verb> by ATTACKER's WEAPON"
     //   "was killed by", "was blown away by", "was shredded by", "was chopped up by"
     //   "got a hole through the head from", "was perforated by", etc.
     m = raw.match(/^(.+?) was (?:killed|blown away|shredded|chopped up|perforated|sniped|gunned down|brutalized) by (.+?)'s (.+?)\b[.!]?$/);
-    if (m) return { victim: m[1], attacker: m[2], weapon: m[3], raw };
+    if (m) return { victim: m[1], attacker: m[2], weapon: m[3], raw, kind: 'kill', mod: null, location: null };
 
     m = raw.match(/^(.+?) was (?:killed|sniped|gunned down) by (.+?)\b[.!]?$/);
-    if (m) return { victim: m[1], attacker: m[2], weapon: null, raw };
+    if (m) return { victim: m[1], attacker: m[2], weapon: null, raw, kind: 'kill', mod: null, location: null };
 
-    // Vanilla Q2: "VICTIM was blasted by ATTACKER"
     m = raw.match(/^(.+?) was (?:blasted|railed|nailed|bolted|killed) by (.+?)$/);
-    if (m) return { victim: m[1], attacker: m[2], weapon: null, raw };
+    if (m) return { victim: m[1], attacker: m[2], weapon: null, raw, kind: 'kill', mod: null, location: null };
 
-    // Unknown template (e.g. AQ2/Action death lines). Surface the raw line so
-    // the UI can still render it. `victim === ''` is the contract for "raw only".
-    return { victim: '', attacker: null, weapon: null, raw };
+    // Unknown template or a non-obituary PRINT_MEDIUM line (bot nav,
+    // rename notices). Surface the raw line so the UI can still render it.
+    return { victim: '', attacker: null, weapon: null, raw, kind: 'info', mod: null, location: null };
 }
 

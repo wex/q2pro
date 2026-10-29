@@ -76,6 +76,14 @@ export {
     CombatFxOptions,
     DamageEvent,
 } from './combat-fx';
+export {
+    classifyAq2Obituary,
+    Aq2Obituary,
+    ObituaryKind,
+    HitLocationKind,
+    expandedTemplates,
+    ExpandedTemplate,
+} from './aq2-obituaries';
 export { PakIndex, PakEntry, PakMethod } from './pak';
 export {
     resolveWeaponLabel,

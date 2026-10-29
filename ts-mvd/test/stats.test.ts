@@ -26,10 +26,21 @@ describe('StatsTracker aggregation', () => {
 
     test('suicide/world obituaries award no kills and no deaths', () => {
         const s = tracker();
-        s.noteObituary({ victim: 'Bob', attacker: null, weapon: 'suicide' });
+        s.noteObituary({ victim: 'Bob', attacker: null, weapon: 'suicide', kind: 'suicide' });
+        s.noteObituary({ victim: 'Carol', attacker: null, weapon: 'falling', kind: 'world' });
         const p = s.snapshot().rounds[0].players;
         expect(p['Bob']).toBeUndefined();
+        expect(p['Carol']).toBeUndefined();
         expect(p['']).toBeUndefined();
+    });
+
+    test('info-kind obituaries (non-death prints) are ignored', () => {
+        const s = tracker();
+        s.noteObituary({ victim: '', attacker: null, weapon: null, kind: 'info' });
+        s.noteObituary({ victim: '', attacker: 'Alice', weapon: 'mk23', kind: 'info' });
+        const snap = s.snapshot();
+        expect(snap.rounds[0].players).toEqual({});
+        expect(snap.rounds[0].weaponKills).toEqual({});
     });
 
     test('deaths come from noteDeath only — obituary never double-counts', () => {

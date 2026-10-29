@@ -142,8 +142,11 @@ export class StatsTracker {
      * are counted by `noteDeath` (the STAT_HEALTH → 0 edge is authoritative
      * and doesn't depend on obituary templates parsing the victim name).
      */
-    noteObituary(ev: { victim: string; attacker: string | null; weapon: string | null }): void {
-        if (!ev.attacker) return; // suicide / world death — no kill awarded
+    noteObituary(ev: { victim: string; attacker: string | null; weapon: string | null; kind?: string }): void {
+        // 'info' = not a death line (bot nav, renames); suicide/world
+        // deaths have no attacker and award no kill. Deaths themselves
+        // are counted by noteDeath (STAT_HEALTH → 0).
+        if (ev.kind === 'info' || !ev.attacker) return;
         const killer = this.player(ev.attacker);
         killer.kills++;
         const w = ev.weapon ?? UNKNOWN_WEAPON;

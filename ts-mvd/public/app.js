@@ -1119,6 +1119,7 @@ function flashScoreboardRow(num, cls) {
 
 function appendKillfeed(ev) {
     const li = document.createElement('li');
+    if (ev.kind === 'info') li.classList.add('info');
     if (ev.attacker) {
         const wep = ev.weapon ? ` <span class="weapon">[${escapeHtml(ev.weapon)}]</span>` : '';
         li.innerHTML = `<span class="attacker">${escapeHtml(ev.attacker)}</span> \u2192 <span class="victim">${escapeHtml(ev.victim)}</span>${wep}`;

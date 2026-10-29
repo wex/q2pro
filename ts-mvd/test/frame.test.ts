@@ -1,6 +1,7 @@
 import { MvdDemoReader } from '../src/demo';
 import { MvdFrameParser, FrameEvent, ServerDataEvent, ConfigStringEvent, ChatEvent, ObituaryEvent, DeathEvent, SoundEvent, classifyHit, classifyChat, classifyObituary } from '../src/frame';
 import { readDemoBytes } from './helpers/fixtures';
+import { StatsTracker } from '../src/stats';
 
 interface ParseResult {
     serverData: ServerDataEvent[];
@@ -132,6 +133,39 @@ describe('MvdFrameParser against demo.mvd2', () => {
         expect(result.parseWarnings).toBe(0);
     });
 
+    test('obituaries classify into kill/world/info with AQ2 attribution', () => {
+        // The demo's confirmed MK23 headshot kill must attribute correctly.
+        expect(result.obits).toContainEqual(expect.objectContaining({
+            kind: 'kill', victim: 'fren waters', attacker: 'mJw - Royce',
+            mod: 'mk23', weapon: 'mk23', location: 'head',
+        }));
+        // "... plummets to his death" is a world death, not a kill.
+        expect(result.obits).toContainEqual(expect.objectContaining({
+            kind: 'world', attacker: null, mod: 'falling',
+        }));
+        // Bot-nav PRINT_MEDIUM lines are info, not obituaries.
+        expect(result.obits).toContainEqual(expect.objectContaining({ kind: 'info', victim: '' }));
+        for (const o of result.obits) {
+            if (o.kind === 'kill') {
+                expect(o.attacker).not.toBeNull();
+                expect(o.victim.length).toBeGreaterThan(0);
+            }
+        }
+    });
+
+    test('StatsTracker attributes the demo kill end-to-end', () => {
+        const tracker = new StatsTracker();
+        for (const o of result.obits) tracker.noteObituary(o);
+        for (const d of result.deaths) tracker.noteDeath(d);
+        const snap = tracker.snapshot();
+        expect(snap.totals.players['mJw - Royce'].kills).toBe(1);
+        expect(snap.totals.weaponKills).toEqual({ mk23: 1 });
+        // No info-line garbage players leaked into the stats.
+        for (const name of Object.keys(snap.totals.players)) {
+            expect(name.length).toBeGreaterThan(0);
+        }
+    });
+
     test('emits onSound for the demo\'s inner svc_sound packets', () => {
         // The demo carries svc_sound in multicasts (previously dropped as
         // unknown-op warnings). Every event must decode with sane defaults.
@@ -205,23 +239,34 @@ describe('MvdFrameParser misc', () => {
     test('classifyObituary matches vanilla Q2 templates', () => {
         expect(classifyObituary('Alice killed himself\n')).toEqual({
             victim: 'Alice', attacker: null, weapon: 'suicide', raw: 'Alice killed himself',
+            kind: 'suicide', mod: 'suicide', location: null,
         });
         expect(classifyObituary('Bob was blasted by Charlie\n')).toEqual({
-            victim: 'Bob', attacker: 'Charlie', weapon: null, raw: 'Bob was blasted by Charlie',
+            victim: 'Bob', attacker: 'Charlie', weapon: 'blaster', raw: 'Bob was blasted by Charlie',
+            kind: 'kill', mod: 'blaster', location: 'body',
         });
     });
 
-    test('classifyObituary returns raw-only fallback for unknown templates', () => {
-        // AQ2/Action death line — no vanilla template matches.
+    test('classifyObituary matches AQ2 templates via the ported table', () => {
+        // The canonical AQ2/TNG line — previously fell into raw-only.
         const raw = "Alice has a hole in his head from Bob's Mark 23 pistol";
         expect(classifyObituary(raw + '\n')).toEqual({
-            victim: '', attacker: null, weapon: null, raw,
+            victim: 'Alice', attacker: 'Bob', weapon: 'mk23', raw,
+            kind: 'kill', mod: 'mk23', location: 'head',
         });
 
-        // Another AQ2 line that looked like suicide before but wasn't caught.
         const raw2 = 'Alice ate too much glass';
         expect(classifyObituary(raw2 + '\n')).toEqual({
-            victim: '', attacker: null, weapon: null, raw: raw2,
+            victim: 'Alice', attacker: null, weapon: 'glass', raw: raw2,
+            kind: 'world', mod: 'glass', location: null,
+        });
+    });
+
+    test('classifyObituary marks non-death PRINT_MEDIUM lines as info', () => {
+        const raw = 'Saving node table...';
+        expect(classifyObituary(raw + '\n')).toEqual({
+            victim: '', attacker: null, weapon: null, raw,
+            kind: 'info', mod: null, location: null,
         });
     });
 
