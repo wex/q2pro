@@ -33,6 +33,26 @@ describe('Session.dispose', () => {
     });
 });
 
+describe('MVD dummy slot', () => {
+    test('serverdata clientNum is exposed as dummyNum and in the snapshot', () => {
+        const s = make();
+        expect(s.dummyNum).toBe(-1);
+        s.parser.onServerData?.({
+            protocol: 38,
+            version: 2007,
+            flags: 0,
+            extended: false,
+            servercount: 1,
+            gamedir: 'action',
+            clientNum: 7,
+            configstrings: new Map(),
+        });
+        expect(s.dummyNum).toBe(7);
+        expect(s.snapshot().clientNum).toBe(7);
+        s.dispose();
+    });
+});
+
 describe('replay seek catch-up', () => {
     test('catch-up messages rebuild state silently — only seeked broadcasts', () => {
         const events: string[] = [];

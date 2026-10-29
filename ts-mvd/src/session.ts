@@ -125,6 +125,11 @@ export class Session {
     /** Configstring layout of the current stream (doc/configstring-layout.md). */
     csExtended = false;
 
+    /** Client slot of the MVD observer dummy (serverdata.clientNum), -1 when
+     * the stream has none. The dummy owns a playerskin configstring, so
+     * configstring-derived rosters must skip it explicitly. */
+    dummyNum = -1;
+
     readonly chatLog: ChatEntry[] = [];
     readonly killFeed: KillEntry[] = [];
     readonly scoreboard: ScoreboardState = {
@@ -216,6 +221,7 @@ export class Session {
             this.configstrings.clear();
             this.players.clear();
             this.csExtended = ev.extended;
+            this.dummyNum = ev.clientNum;
             for (const [index, value] of ev.configstrings) {
                 this.configstrings.set(index, value);
             }
@@ -588,6 +594,7 @@ export class Session {
         this.scoreboard.layoutText = '';
         this.scoreboard.players = {};
         this.latestStatus = null;
+        this.dummyNum = -1;
     }
 
     /** Snapshot payload for the /events SSE stream. */
@@ -598,6 +605,7 @@ export class Session {
             session: this.id,
             configstrings: cs,
             extended: this.csExtended,
+            clientNum: this.dummyNum,
             players: Array.from(this.players.values()).map((p) => this.serializePlayer(p)),
             status: this.latestStatus,
             chatLog: this.chatLog,

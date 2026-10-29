@@ -58,6 +58,11 @@ let dpr = window.devicePixelRatio || 1;
 let teamMapCache = null;
 let playerInfoCache = {};
 let maxclientsCache = 0;
+// Client slot of the MVD observer dummy (from serverdata.clientNum, -1 when
+// the stream has none). The dummy owns a playerskin configstring ("[MVDSPEC]")
+// so configstring-derived rosters must skip it explicitly — the SSE `players`
+// array is already filtered server-side.
+let dummyNum = -1;
 
 // Configstring layout of the current stream (from serverdata.extended).
 // The EXT bases alias into the vanilla CS_MODELS range, so always pick one
@@ -1028,6 +1033,7 @@ function renderScoreboard() {
     const seen = new Set();
     for (const [numStr, sbp] of Object.entries(scoreboardState.players || {})) {
         const num = +numStr;
+        if (num === dummyNum) continue;
         seen.add(num);
         const info = getPlayerInfo(num);
         if (!info.name) continue;
@@ -1036,7 +1042,7 @@ function renderScoreboard() {
     // Also include anyone present via status/configstrings but not yet in a stats delta.
     if (maxclientsCache > 0) {
         for (let i = 0; i < maxclientsCache; i++) {
-            if (seen.has(i)) continue;
+            if (i === dummyNum || seen.has(i)) continue;
             const info = getPlayerInfo(i);
             if (!info.name) continue;
             rows.push({ number: i, name: info.name, frags: 0 });
@@ -1218,6 +1224,7 @@ function connectSSE() {
     es.addEventListener('snapshot', (e) => {
         const data = JSON.parse(e.data);
         csExtended = !!data.extended;
+        dummyNum = typeof data.clientNum === 'number' ? data.clientNum : -1;
         configstrings = data.configstrings || {};
         players = data.players || [];
         loadoutCache = {};
@@ -1249,6 +1256,7 @@ function connectSSE() {
     es.addEventListener('serverdata', (e) => {
         const data = JSON.parse(e.data);
         csExtended = !!data.extended;
+        dummyNum = typeof data.clientNum === 'number' ? data.clientNum : -1;
         configstrings = data.configstrings || {};
         invalidateConfigCaches();
         checkMapChange();
