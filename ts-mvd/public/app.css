@@ -34,7 +34,8 @@ body {
 #status {
     position: absolute;
     top: 10px;
-    left: 10px;
+    left: 50%;
+    transform: translateX(-50%);
     display: flex;
     align-items: center;
     gap: 12px;
@@ -174,9 +175,6 @@ body {
 
 #panel-left {
     left: 10px;
-    /* Sits under the status pill (top:10px, ~30px tall). */
-    top: 56px;
-    max-height: calc(100vh - 66px);
 }
 
 #panel section,
@@ -217,6 +215,50 @@ body {
 /* Follow mode: hide the whole feed column while camera-locked
    (scoreboard + stats stay visible on the right). */
 #panel-left.follow-mode {
+    display: none;
+}
+
+/* ── Watch modes (hotkeys 1/2/3/7/8/9, ESC returns to default) ── */
+
+/* 1: no replay bar, chat or match stats — kill feed + scoreboard. */
+body[data-viewmode="1"] #status,
+body[data-viewmode="1"] #chat-section,
+body[data-viewmode="1"] #stats-section {
+    display: none;
+}
+
+/* 2: map only. */
+body[data-viewmode="2"] #status,
+body[data-viewmode="2"] #panel,
+body[data-viewmode="2"] #panel-left {
+    display: none;
+}
+
+/* 3: scoreboard only. */
+body[data-viewmode="3"] #status,
+body[data-viewmode="3"] #stats-section,
+body[data-viewmode="3"] #panel-left {
+    display: none;
+}
+
+/* 7: scoreboard only (same visible set as 3). */
+body[data-viewmode="7"] #status,
+body[data-viewmode="7"] #stats-section,
+body[data-viewmode="7"] #panel-left {
+    display: none;
+}
+
+/* 8: match stats only. */
+body[data-viewmode="8"] #status,
+body[data-viewmode="8"] #scoreboard-section,
+body[data-viewmode="8"] #panel-left {
+    display: none;
+}
+
+/* 9: kill feed only. */
+body[data-viewmode="9"] #status,
+body[data-viewmode="9"] #chat-section,
+body[data-viewmode="9"] #panel {
     display: none;
 }
 

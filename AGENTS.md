@@ -105,6 +105,7 @@ The test runner is Jest with `ts-jest`. See `doc/testing.md` for the full guide.
 - `doc/live-recording.md` — `Mvd2Writer` + `/record` endpoints.
 - `doc/demo-controls.md` — replay pause/seek/speed + `/replay/control`.
 - `doc/sound-events.md` — `onSound` event, CS_SOUNDS name resolution, map ping.
+- `doc/view-modes.md` — watch-mode hotkeys (1/2/3/7/8/9, ESC) + HUD panel layout.
 - `doc/gtf-deflate.md` — zlib stream compression semantics + client opts.
 - `doc/session-stats.md` — `StatsTracker`, round detection, `GET /stats` + SSE.
 - `doc/session-refactor.md` — `Session` class layout, `?session=` scoping.

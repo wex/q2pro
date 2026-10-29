@@ -1654,11 +1654,25 @@ function toggleTextures() {
 
 elBtnTextures.addEventListener('click', toggleTextures);
 
+/** Watch modes: 0 = everything visible; see CSS `body[data-viewmode]` rules. */
+let viewMode = 0;
+const VIEW_MODE_KEYS = { '1': 1, '2': 2, '3': 3, '7': 7, '8': 8, '9': 9 };
+
+function setViewMode(n) {
+    viewMode = n;
+    if (n === 0) document.body.removeAttribute('data-viewmode');
+    else document.body.setAttribute('data-viewmode', String(n));
+}
+
 document.addEventListener('keydown', (e) => {
+    const tag = document.activeElement ? document.activeElement.tagName : '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     if (e.key === 't' || e.key === 'T') {
-        const tag = document.activeElement ? document.activeElement.tagName : '';
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
         toggleTextures();
+    } else if (e.key === 'Escape') {
+        if (viewMode !== 0) setViewMode(0);
+    } else if (VIEW_MODE_KEYS[e.key] !== undefined) {
+        setViewMode(VIEW_MODE_KEYS[e.key]);
     }
 });
 
