@@ -17,7 +17,8 @@ parser already produces — no protocol changes. Exposed over HTTP
 | `onHit` | hits dealt + body-location tally (`head`/`chest`/`stomach`/`legs`/`body`) |
 | `onHitTaken` | hits received |
 | `onTempEntity` (`TE_DAMAGE_DEALT`) | damage dealt — the AQ2 hit-marker number (`doc/damage-stats.md`) |
-| `onLayout` / `onCenterPrint` / broadcast `onPrint` text | round-boundary detection |
+| `onLayout` / `onCenterPrint` / broadcast `onPrint` text | round-boundary detection (start + end markers — `doc/round-scores.md`) |
+| `onFrame.teamScores` | per-round team score capture (`doc/round-scores.md`) |
 
 `StatsTracker` lives in `src/stats.ts` — pure module, injectable clock and
 `namer` callback for testing.
@@ -33,9 +34,12 @@ parser already produces — no protocol changes. Exposed over HTTP
   `^(timelimit|fraglimit) hit`, `match ended` — narrow on purpose: a false
   positive only splits a round, never corrupts data. The match-end prints
   are fed from **broadcast** `mvd_print` ops only (`clientNum ===
-  undefined`); unicast prints are per-recipient and excluded. Streams
+  undefined`); unicast prints are per-recipient and excluded. Round-end
+  prints (`"The round is over:"` via `DEFAULT_END_PATTERNS`) close the
+  current round and stamp its final `teamScores`/`endedAt` without opening
+  a new one — see `doc/round-scores.md`. Streams
   without boundary text accumulate into a single round. Override via
-  `StatsTrackerOptions.roundPatterns`.
+  `StatsTrackerOptions.roundPatterns` / `endPatterns`.
 - **Centerprints dedupe per tick.** `PF_centerprintf` is a unicast, so
   `CenterPrintAll` arrives once per connected client; the parser collapses
   same-text duplicates within a tick (same mechanism as chat/obituaries —
@@ -67,7 +71,8 @@ parser.onTempEntity = (ev) => {
         stats.noteDamageDealt({ attacker: ev.clientNum, damage: ev.count! });
 };
 // layout + centerprint text:
-stats.noteText(ev.text); // true ⇒ a new round opened
+stats.noteText(ev.text); // true ⇒ a new round opened OR the current closed
+parser.onFrame    = (ev) => stats.noteScores(ev.teamScores);
 stats.snapshot();        // JSON-safe { rounds, totals }
 stats.reset();
 ```
@@ -78,4 +83,5 @@ stats.reset();
 - The `/events` snapshot payload carries `stats` for initial paint.
 
 Exported from `index.ts`: `StatsTracker`, `StatsTrackerOptions`,
-`StatsSnapshot`, `PlayerRoundStats`, `RoundStats`, `DEFAULT_ROUND_PATTERNS`.
+`StatsSnapshot`, `PlayerRoundStats`, `RoundStats`, `DEFAULT_ROUND_PATTERNS`,
+`DEFAULT_END_PATTERNS`.

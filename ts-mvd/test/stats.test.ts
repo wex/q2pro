@@ -150,6 +150,54 @@ describe('StatsTracker round boundaries', () => {
         expect(s.noteText('GO')).toBe(true);
     });
 
+    test('end marker stamps scores + endedAt without opening a round', () => {
+        let t = 1000;
+        const s = new StatsTracker({ namer, now: () => t });
+        s.noteScores({ team1: 0, team2: 0, team3: 0 });
+        expect(s.noteText('ACTION!')).toBe(true); // round 1 starts
+        s.noteScores({ team1: 0, team2: 1, team3: 0 });
+        t = 2000;
+        expect(s.noteText('The round is over:')).toBe(true);
+        const snap = s.snapshot();
+        // End marker closed round 1 — no phantom round opened.
+        expect(snap.rounds).toHaveLength(2);
+        expect(snap.rounds[1].endedAt).toBe(2000);
+        expect(snap.rounds[1].teamScores).toEqual({ team1: 0, team2: 1, team3: 0 });
+        expect(snap.rounds[1].winner).toBe('team2');
+        expect(snap.rounds[0].teamScores).toBeUndefined();
+    });
+
+    test('a round closed by the next start marker still stamps its scores', () => {
+        const s = tracker();
+        s.noteScores({ team1: 0, team2: 0, team3: 0 });
+        s.noteText('ACTION!');
+        s.noteScores({ team1: 2, team2: 1, team3: 0 });
+        expect(s.noteText('ACTION!')).toBe(true);
+        const snap = s.snapshot();
+        expect(snap.rounds[1].teamScores).toEqual({ team1: 2, team2: 1, team3: 0 });
+        expect(snap.rounds[1].winner).toBe('team1');
+        // The live round shows the current tally (leader so far).
+        expect(snap.rounds[2].teamScores).toEqual({ team1: 2, team2: 1, team3: 0 });
+        expect(snap.rounds[2].winner).toBe('team1');
+    });
+
+    test('winner derivation: tie and all-zero cases', () => {
+        const s = tracker();
+        s.noteScores({ team1: 2, team2: 2, team3: 0 });
+        expect(s.noteText('ACTION!')).toBe(true); // stamps {2,2,0} on round 0
+        expect(s.snapshot().rounds[0].winner).toBe('tie');
+        s.noteScores({ team1: 0, team2: 0, team3: 0 });
+        expect(s.noteText('ACTION!')).toBe(true);
+        expect(s.snapshot().rounds[1].winner).toBeUndefined();
+    });
+
+    test('custom endPatterns replace the defaults', () => {
+        const s = new StatsTracker({ namer, endPatterns: [/^END$/] });
+        expect(s.noteText('The round is over:')).toBe(false);
+        expect(s.noteText('END')).toBe(true);
+        expect(s.snapshot().rounds).toHaveLength(1);
+    });
+
     test('maxRounds caps retained rounds', () => {
         const s = new StatsTracker({ namer, maxRounds: 3 });
         for (let i = 0; i < 6; i++) s.noteText('FIGHT!');

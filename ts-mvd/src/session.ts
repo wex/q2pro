@@ -282,6 +282,7 @@ export class Session {
             // Merge rather than replace: a player briefly absent from
             // ev.players keeps their accumulated frags.
             this.scoreboard.teamScores = ev.teamScores;
+            this.stats.noteScores(ev.teamScores);
             this.scoreboard.layoutsFlags = ev.layoutsFlags;
             for (const p of ev.players) {
                 if (p.isMvdDummy) continue;

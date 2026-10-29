@@ -982,8 +982,22 @@ function renderTeamScores() {
 }
 
 /** Match-stats panel fed by the 'stats' SSE snapshot (see doc/session-stats.md). */
+const elRoundScores = document.querySelector('#round-scores');
+
 function renderStats(snap) {
     if (!elStatsBody || !snap || !snap.totals) return;
+    if (elRoundScores) {
+        const chips = (snap.rounds || [])
+            .filter((r) => r.teamScores)
+            .map((r) => {
+                const s = r.teamScores;
+                const parts = [`T1 ${s.team1}`, `T2 ${s.team2}`];
+                if (s.team3) parts.push(`T3 ${s.team3}`);
+                const cls = r.winner ? `round-score ${r.winner}` : 'round-score';
+                return `<span class="${cls}">R${r.index}: ${parts.join('–')}</span>`;
+            });
+        elRoundScores.innerHTML = chips.join(' ');
+    }
     const rows = Object.entries(snap.totals.players || {})
         .map(([name, p]) => ({ name, ...p }))
         .sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));

@@ -44,6 +44,7 @@ export type {
 export {
     StatsTracker,
     DEFAULT_ROUND_PATTERNS,
+    DEFAULT_END_PATTERNS,
 } from './stats';
 export type {
     StatsTrackerOptions,

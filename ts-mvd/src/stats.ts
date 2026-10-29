@@ -28,20 +28,37 @@ export interface PlayerRoundStats {
     weaponsUsed: Record<string, number>;
 }
 
+/** Team-score tally (STAT_TEAM{1,2,3}_SCORE); structurally decoupled from
+ *  frame.ts's TeamScores so the tracker stays parser-free. */
+export interface ScoreTally {
+    team1: number;
+    team2: number;
+    team3: number;
+}
+
 export interface RoundStats {
     index: number;
     startedAt: number;
     players: Map<string, PlayerRoundStats>;
     /** Kills by weapon token, aggregated over the round's players. */
     weaponKills: Record<string, number>;
+    /** Team scores at the round's close (end-marker or next round start). */
+    teamScores?: ScoreTally;
+    /** Clock when an end marker ("The round is over:") closed the round. */
+    endedAt?: number;
 }
 
 export interface StatsSnapshot {
     rounds: Array<{
         index: number;
         startedAt: number;
+        endedAt?: number;
         players: Record<string, PlayerRoundStats>;
         weaponKills: Record<string, number>;
+        teamScores?: ScoreTally;
+        /** Strict argmax of teamScores; 'tie' on equal top scores,
+         *  absent when no team scores were ever seen. */
+        winner?: string;
     }>;
     totals: {
         players: Record<string, PlayerRoundStats>;
@@ -54,6 +71,9 @@ export interface StatsTrackerOptions {
     namer?: (clientNum: number) => string | undefined;
     /** Texts matching any pattern open a new round. */
     roundPatterns?: RegExp[];
+    /** Texts matching any pattern CLOSE the current round (stamp final
+     *  team scores) without opening a new one. */
+    endPatterns?: RegExp[];
     /** Retained completed rounds + the live one (default 64). */
     maxRounds?: number;
     now?: () => number;
@@ -78,6 +98,18 @@ export const DEFAULT_ROUND_PATTERNS: readonly RegExp[] = [
     /match ended/i,
 ];
 
+/**
+ * Round-END markers: a matching text stamps the current round's final
+ * team scores + endedAt instead of opening a new round. AQ2's WonGame
+ * broadcasts "The round is over:" at PRINT_HIGH before "X won!" /
+ * "It was a tie" (src/action/a_team.c:2772); the team-score stats
+ * (STAT_TEAM{1,2,3}_SCORE) have already been incremented by then, so the
+ * tally seen by noteScores is the round's final result.
+ */
+export const DEFAULT_END_PATTERNS: readonly RegExp[] = [
+    /^the round is over/i,
+];
+
 const MAX_ROUNDS_DEFAULT = 64;
 const UNKNOWN_WEAPON = 'unknown';
 
@@ -89,21 +121,33 @@ export interface StatsEventSource {
 export class StatsTracker {
     private readonly namer: (clientNum: number) => string | undefined;
     private readonly roundPatterns: RegExp[];
+    private readonly endPatterns: RegExp[];
     private readonly maxRounds: number;
     private readonly now: () => number;
 
     private rounds: RoundStats[] = [];
     private roundIndex = 0;
+    private latestScores: ScoreTally = { team1: 0, team2: 0, team3: 0 };
+    private sawScores = false;
 
     constructor(opts: StatsTrackerOptions = {}) {
         this.namer = opts.namer ?? (() => undefined);
         this.roundPatterns = opts.roundPatterns ?? [...DEFAULT_ROUND_PATTERNS];
+        this.endPatterns = opts.endPatterns ?? [...DEFAULT_END_PATTERNS];
         this.maxRounds = opts.maxRounds ?? MAX_ROUNDS_DEFAULT;
         this.now = opts.now ?? Date.now;
         this.newRound();
     }
 
     private newRound(): void {
+        // Closing a round (implicitly, on the next start marker): stamp its
+        // final team scores if no end marker did so already. All-zero tallies
+        // are skipped — they appear on DM streams and pre-score segments.
+        const prev = this.rounds[this.rounds.length - 1];
+        if (prev && !prev.teamScores && this.sawScores
+            && (this.latestScores.team1 || this.latestScores.team2 || this.latestScores.team3)) {
+            prev.teamScores = { ...this.latestScores };
+        }
         this.rounds.push({
             index: this.roundIndex++,
             startedAt: this.now(),
@@ -176,20 +220,49 @@ export class StatsTracker {
         this.player(this.nameFor(ev.attacker)).damageDealt += ev.damage;
     }
 
+    /** Latest team scores from FrameEvent.teamScores — fed each frame. */
+    noteScores(scores: ScoreTally): void {
+        this.latestScores = { ...scores };
+        this.sawScores = true;
+        // The STAT_TEAM*_SCORE delta lands a frame or two AFTER the end
+        // print ("The round is over:" precedes WonGame's score++ delta).
+        // An ended-but-unstamped round keeps absorbing updates until the
+        // next round opens.
+        const cur = this.current;
+        if (cur && cur.endedAt !== undefined && !cur.teamScores
+            && (scores.team1 || scores.team2 || scores.team3)) {
+            cur.teamScores = { ...scores };
+        }
+    }
+
     /**
-     * Feed layout/centerprint text for round-boundary detection.
-     * Returns true when the text opened a new round.
+     * Feed layout/centerprint/broadcast text for round-boundary detection.
+     * Returns true when the text opened a new round OR closed the current
+     * one (end markers stamp final team scores, no new round opens).
      */
     noteText(text: string): boolean {
         const line = text.trim();
-        if (!this.roundPatterns.some((re) => re.test(line))) return false;
-        this.newRound();
-        return true;
+        if (this.roundPatterns.some((re) => re.test(line))) {
+            this.newRound();
+            return true;
+        }
+        if (this.endPatterns.some((re) => re.test(line))) {
+            const cur = this.current;
+            cur.endedAt = this.now();
+            if (this.sawScores && !cur.teamScores
+                && (this.latestScores.team1 || this.latestScores.team2 || this.latestScores.team3)) {
+                cur.teamScores = { ...this.latestScores };
+            }
+            return true;
+        }
+        return false;
     }
 
     reset(): void {
         this.rounds = [];
         this.roundIndex = 0;
+        this.latestScores = { team1: 0, team2: 0, team3: 0 };
+        this.sawScores = false;
         this.newRound();
     }
 
@@ -217,7 +290,32 @@ export class StatsTracker {
             for (const [w, n] of Object.entries(r.weaponKills)) {
                 totals.weaponKills[w] = (totals.weaponKills[w] ?? 0) + n;
             }
-            return { index: r.index, startedAt: r.startedAt, players, weaponKills: { ...r.weaponKills } };
+            // The live round shows the latest tally; closed rounds keep
+            // the scores stamped at their close.
+            const scores = r.teamScores
+                ?? (this.rounds[this.rounds.length - 1] === r && this.sawScores
+                        && (this.latestScores.team1 || this.latestScores.team2 || this.latestScores.team3)
+                    ? this.latestScores
+                    : undefined);
+            let winner: string | undefined;
+            if (scores) {
+                const top = Math.max(scores.team1, scores.team2, scores.team3);
+                if (top > 0) {
+                    const tops = [
+                        ['team1', scores.team1], ['team2', scores.team2], ['team3', scores.team3],
+                    ].filter(([, v]) => v === top) as Array<[string, number]>;
+                    winner = tops.length === 1 ? tops[0][0] : 'tie';
+                }
+            }
+            return {
+                index: r.index,
+                startedAt: r.startedAt,
+                endedAt: r.endedAt,
+                players,
+                weaponKills: { ...r.weaponKills },
+                teamScores: scores ? { ...scores } : undefined,
+                winner,
+            };
         });
         return { rounds, totals };
     }

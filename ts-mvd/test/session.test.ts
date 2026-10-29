@@ -80,3 +80,27 @@ describe('TE_DAMAGE_DEALT damage stats', () => {
         s.dispose();
     });
 });
+
+describe('round team scores', () => {
+    test('onFrame feeds teamScores; end marker stamps the round', () => {
+        const s = make();
+        const frame = (t1: number, t2: number, t3: number) => s.parser.onFrame?.({
+            frameNumber: 0,
+            players: [],
+            teamScores: { team1: t1, team2: t2, team3: t3 },
+            layoutsFlags: 0,
+        });
+        frame(0, 0, 0);
+        // ACTION! opens round 1 via the centerprint path.
+        s.parser.onCenterPrint?.({ clientNum: 18, text: 'ACTION!' });
+        // Round plays out; scores update, then the end broadcast closes it.
+        frame(0, 1, 0);
+        s.parser.onPrint?.({ level: 2, text: 'The round is over:\n' });
+        const snap = s.stats.snapshot();
+        expect(snap.rounds).toHaveLength(2);
+        expect(snap.rounds[1].teamScores).toEqual({ team1: 0, team2: 1, team3: 0 });
+        expect(snap.rounds[1].winner).toBe('team2');
+        expect(snap.rounds[1].endedAt).toBeDefined();
+        s.dispose();
+    });
+});
