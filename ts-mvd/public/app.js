@@ -34,6 +34,7 @@ const elKillfeed = /** @type {HTMLElement} */ (document.getElementById('killfeed
 const elChat = /** @type {HTMLElement} */ (document.getElementById('chat'));
 const elBtnTextures = /** @type {HTMLButtonElement} */ (document.getElementById('btn-textures'));
 const elPanel = /** @type {HTMLElement} */ (document.getElementById('panel'));
+const elPanelLeft = /** @type {HTMLElement} */ (document.getElementById('panel-left'));
 const elReplayPause = /** @type {HTMLButtonElement} */ (document.getElementById('replay-pause'));
 const elReplaySeek = /** @type {HTMLInputElement} */ (document.getElementById('replay-seek'));
 const elReplaySpeed = /** @type {HTMLSelectElement} */ (document.getElementById('replay-speed'));
@@ -353,10 +354,10 @@ function isFollowTargetAlive() {
     return !!(sticky && sticky.alive);
 }
 
-/** Hide kill feed + chat while camera-locked (`#panel.follow-mode`). */
+/** Hide the left feed column while camera-locked (right panel stays). */
 function updateFollowUi() {
-    if (!elPanel) return;
-    elPanel.classList.toggle('follow-mode', lockedPlayerNum !== null);
+    if (elPanel) elPanel.classList.toggle('follow-mode', lockedPlayerNum !== null);
+    if (elPanelLeft) elPanelLeft.classList.toggle('follow-mode', lockedPlayerNum !== null);
 }
 
 /** Keep the map rectangle inside the CSS viewport (no off-map void). */
