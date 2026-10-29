@@ -6,9 +6,10 @@ const config: Config = {
     rootDir: '.',
     testMatch: ['<rootDir>/test/**/*.test.ts'],
     testPathIgnorePatterns: ['/node_modules/', '/dist/'],
-    // The app module owns long-lived handles (HTTP server, UDP socket) that
-    // can't all be cleaned between suites; let jest exit once tests pass.
-    forceExit: true,
+    // app.test.ts calls closeAppForTests() in afterAll — sessions, UDP
+    // socket, SSE heartbeat and HTTP listener all release cleanly, so the
+    // suite no longer needs forceExit.
+    forceExit: false,
     // ts-jest reads tsconfig.test.json so jest types and the test root are available
     // without polluting the shipped dist build.
     transform: {

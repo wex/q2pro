@@ -21,7 +21,7 @@ jest.mock('net', () => ({
     },
 }));
 
-import { httpServer, resetAppStateForTests, DEMOS_DIR, parser, client, getScoreboardForTests, getPlayersForTests, sseClients, sseHeartbeatTick, isStatusReplySource, resolveStatusTargetIps } from '../src/app';
+import { httpServer, resetAppStateForTests, closeAppForTests, DEMOS_DIR, parser, client, getScoreboardForTests, getPlayersForTests, sseClients, sseHeartbeatTick, isStatusReplySource, resolveStatusTargetIps } from '../src/app';
 import { PlayerState } from '../src/frame';
 import { Stat, MvdOp, GtvServerOp } from '../src/protocol';
 import { buildSynthBsp } from './helpers/fixtures';
@@ -87,7 +87,7 @@ describe('HTTP control surface', () => {
 
     afterAll(() => {
         resetAppStateForTests();
-        httpServer.close();
+        closeAppForTests();
     });
 
     test('GET /state returns idle when nothing is active', async () => {

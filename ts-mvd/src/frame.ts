@@ -706,6 +706,10 @@ export class MvdFrameParser {
                     origin: [...ps.origin],
                     viewangles: [...ps.viewangles],
                     viewoffset: [...ps.viewoffset],
+                    // Defensive copy — the live Int16Array keeps mutating on
+                    // later frames; consumers retaining this event would see
+                    // the tail of the match, not the snapshot.
+                    stats: ps.stats.slice(),
                 });
             }
         }
@@ -1473,7 +1477,8 @@ export class MvdFrameParser {
             this.onDeath?.({ clientNum: ps.number, origin: world });
         }
 
-        this.onStats?.({ clientNum: ps.number, stats: ps.stats });
+        // Same copy as FrameEvent.players — the buffer is reused per player.
+        this.onStats?.({ clientNum: ps.number, stats: ps.stats.slice() });
     }
 
     private applyStat(index: number, value: number): void {

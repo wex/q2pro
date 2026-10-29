@@ -111,6 +111,23 @@ describe('MvdFrameParser against demo.mvd2', () => {
         }
     });
 
+    test('frame player stats are defensive copies, not the live buffer', () => {
+        // Two frames sharing a player must not alias the same Int16Array —
+        // the parser reuses its internal buffer, so a retained event would
+        // otherwise silently show later state (AUDIT-2 item 16).
+        const seen = new Map<number, Int16Array>();
+        for (const f of result.frames) {
+            for (const p of f.players) {
+                const prev = seen.get(p.number);
+                if (prev) {
+                    expect(prev).not.toBe(p.stats);
+                }
+                seen.set(p.number, p.stats);
+            }
+        }
+        expect(seen.size).toBeGreaterThan(0);
+    });
+
     test('at least one frame has active players with finite origins/viewangles', () => {
         const frameWithPlayers = result.frames.find((f) => f.players.length > 0);
         expect(frameWithPlayers).toBeDefined();

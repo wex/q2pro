@@ -108,9 +108,9 @@ Before merging a Devin PR, verify:
 
 ## 7. Troubleshooting tips to hand Devin
 
-- The `app` module owns long-lived HTTP/UDP handles; `jest.config.ts`
-  sets `forceExit: true` for that reason. Don't weaken `forceExit`
-  without a deeper refactor.
+- The `app` module owns long-lived HTTP/UDP handles; suites that import
+  it must call `closeAppForTests()` in `afterAll` so jest exits without
+  `forceExit`.
 - `app.test.ts` must keep `httpServer.listen()` and `SIGINT` hooks
   behind `require.main === module`, and call `resetAppStateForTests()`
   between cases.

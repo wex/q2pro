@@ -61,14 +61,14 @@ The test runner is Jest with `ts-jest`. See `doc/testing.md` for the full guide.
 - Suites live in `ts-mvd/test/` matching `*.test.ts`: `buffer.test.ts`, `demo.test.ts`, `frame.test.ts`, `client.test.ts`, `app.test.ts`, `player-loadout.test.ts`, `combat-fx.test.ts`, `pak.test.ts`, `bsp.test.ts`, `wal.test.ts`, `map-render.test.ts`, `mvd2-writer.test.ts`, `stats.test.ts`, `browser-consts.test.ts`.
 - Shared fixtures in `ts-mvd/test/helpers/fixtures.ts` (exports `DEMO_PATH` and a `buildMvd2` synth helper). Replay tests use the bundled `ts-mvd/assets/demos/demo.mvd2` so no live Q2Pro server is needed.
 - Configs:
-  - `ts-mvd/jest.config.ts` — `ts-jest` preset, `testEnvironment: node`, `forceExit: true` (the `app` module owns long-lived UDP/HTTP handles).
+  - `ts-mvd/jest.config.ts` — `ts-jest` preset, `testEnvironment: node`. `app.test.ts` calls `closeAppForTests()` in `afterAll` to release the `app` module's UDP/HTTP/session handles, so no `forceExit` is needed.
   - `ts-mvd/tsconfig.test.json` — extends `tsconfig.json`, adds `jest`/`node` types and widens `rootDir` so tests type-check alongside `src/`. The shipped `tsc` build still emits only from `src/`.
 - Conventions:
   - Pure modules (`buffer`, `demo`, `frame`) are tested without mocks.
   - `client.test.ts` mocks `net` with a `FakeSocket` extending `EventEmitter` to drive `connect`/`data`/`close` synchronously.
   - `app.test.ts` uses `supertest` against the exported Express app and calls `resetAppStateForTests()` between cases; `httpServer.listen()` and `SIGINT` hooks are gated behind `require.main === module`.
   - Demo-driven tests use `MvdDemoReader` with `realtime: false` and wait one `setImmediate` tick before asserting.
-- Adding tests: drop new `*.test.ts` files under `ts-mvd/test/`, reuse `fixtures.ts` helpers, and stop any long-lived timers in `afterEach` (or rely on `forceExit`).
+- Adding tests: drop new `*.test.ts` files under `ts-mvd/test/`, reuse `fixtures.ts` helpers, and stop any long-lived timers in `afterEach`/`afterAll` (or call `closeAppForTests()` when importing `app.ts`).
 - Before opening a PR, run both `npm test` and `npm run build` from `ts-mvd/`. Where feasible, also smoke-test `npm run app` against a reachable Q2Pro GTV server.
 
 ## Workflow conventions

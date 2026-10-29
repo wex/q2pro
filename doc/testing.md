@@ -33,9 +33,10 @@ ts-mvd/test/
 
 ## Configuration
 
-- `jest.config.ts` — ts-jest preset, `forceExit: true` (the `app` module
-  keeps long-lived UDP/HTTP handles that can't all be torn down between
-  suites without a deeper refactor).
+- `jest.config.ts` — ts-jest preset, `testEnvironment: node`. No
+  `forceExit`: `app.test.ts` calls `closeAppForTests()` in `afterAll`,
+  which releases every module-owned handle (sessions, UDP socket, SSE
+  heartbeat, HTTP listener) so jest exits on its own.
 - `tsconfig.test.json` — extends `tsconfig.json` adding `types: ["jest",
   "node"]` and widening `rootDir` so tests type-check alongside `src/`.
   The production build (`tsc`) still ships only `src/`.
@@ -51,7 +52,8 @@ ts-mvd/test/
   events synchronously.
 - `app.test.ts` imports the `app` module (side-effect-light now that
   `httpServer.listen()` + `SIGINT` are gated behind `require.main ===
-  module`) and calls `resetAppStateForTests()` between cases.
+  module`), calls `resetAppStateForTests()` between cases and
+  `closeAppForTests()` in `afterAll`.
 - Demo-driven tests use the synchronous drain path of `MvdDemoReader`
   (`realtime: false`) and wait one `setImmediate` tick before asserting.
 
@@ -61,5 +63,6 @@ ts-mvd/test/
 2. Reuse `fixtures.ts` helpers for demo bytes and synthetic `.mvd2`
    buffers. Avoid inlining binary literals where a helper exists.
 3. If a new feature starts long-lived timers, either stop them in
-   `afterEach`, use fake timers, or rely on `forceExit`.
+   `afterEach`/`afterAll`, or use fake timers. Suites importing `app.ts`
+   should call `closeAppForTests()` in `afterAll`.
 4. Run `npm test` and `npm run build` before opening a PR.

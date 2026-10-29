@@ -106,10 +106,23 @@ function loadoutIconHtml(label, map) {
     if (!file) {
         return `<span class="sb-icon-slot sb-icon-label" title="${safe}">${safe}</span>`;
     }
-    // onerror: asset file missing on disk → fall back to red label text
-    return `<img class="sb-icon" src="/assets/${file}" alt="${safe}" title="${safe}"` +
-        ` onerror="this.onerror=null;this.outerHTML='<span class=&quot;sb-icon-slot sb-icon-label&quot; title=&quot;${safe}&quot;>${safe}</span>'">`;
+    // Missing asset files fall back to label text via the delegated error
+    // listener registered below (no inline handler to escape into).
+    return `<img class="sb-icon" src="/assets/${file}" alt="${safe}" title="${safe}">`;
 }
+
+// Delegated icon-fallback: <img> error events don't bubble, so a
+// capture-phase listener on the document swaps a broken sb-icon for its
+// label text regardless of which innerHTML batch inserted it.
+document.addEventListener('error', (e) => {
+    const el = e.target;
+    if (!(el instanceof HTMLImageElement) || !el.classList.contains('sb-icon')) return;
+    const span = document.createElement('span');
+    span.className = 'sb-icon-slot sb-icon-label';
+    span.title = el.alt;
+    span.textContent = el.alt;
+    el.replaceWith(span);
+}, true);
 
 // ─── Combat FX ───────────────────────────────────────────────────────────────
 //

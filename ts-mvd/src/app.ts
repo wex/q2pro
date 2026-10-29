@@ -880,6 +880,27 @@ export function resetAppStateForTests(): void {
     }
 }
 
+/**
+ * Release every module-owned handle — sessions (sockets/timers/fds), the
+ * SSE heartbeat, the UDP status socket, and the HTTP server listener.
+ * Lets the test suite exit cleanly instead of relying on jest `forceExit`.
+ * The module is unusable afterwards (a new import would be required).
+ */
+export function closeAppForTests(): void {
+    for (const s of sessions.values()) {
+        s.dispose();
+    }
+    clearInterval(sseHeartbeat);
+    try {
+        udpSock.close();
+    } catch {
+        // Never bound or already closed.
+    }
+    if (httpServer.listening) {
+        httpServer.close();
+    }
+}
+
 // ── CLI bootstrap ───────────────────────────────────────────────
 
 if (require.main === module) {
