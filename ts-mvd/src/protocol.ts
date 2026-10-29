@@ -108,7 +108,8 @@ export enum SvcOp {
     CenterPrint = 15,
 }
 
-// temp_entity event types (subset used for hit detection, matching inc/shared/shared.h)
+// temp_entity event types — full temp_event_t table from
+// inc/shared/shared.h (vanilla 0-29, Rogue 30-55, KEX 56-63, AQ2 128).
 export enum TempEntityType {
     Gunshot = 0,
     Blood = 1,
@@ -140,7 +141,44 @@ export enum TempEntityType {
     BlueHyper = 27,
     PlasmaExpl = 28,
     TunnelSparks = 29,
+    // ROGUE
+    Blaster2 = 30,
+    RailTrail2 = 31,
+    Flame = 32,
+    Lightning = 33,
+    DebugTrail = 34,
+    PlainExplosion = 35,
+    Flashlight = 36,
+    Forcewall = 37,
+    Heatbeam = 38,
+    MonsterHeatbeam = 39,
+    Steam = 40,
+    BubbleTrail2 = 41,
     MoreBlood = 42,
+    HeatbeamSparks = 43,
+    HeatbeamSteam = 44,
+    ChainfistSmoke = 45,
+    ElectricSparks = 46,
+    TrackerExplosion = 47,
+    TeleportEffect = 48,
+    DballGoal = 49,
+    Widowbeamout = 50,
+    Nukeblast = 51,
+    Widowsplash = 52,
+    Explosion1Big = 53,
+    Explosion1Np = 54,
+    Flechette = 55,
+    // [Paril-KEX]
+    BlueHyper2 = 56,
+    BfgZap = 57,
+    BerserkSlam = 58,
+    GrappleCable2 = 59,
+    PowerSplash = 60,
+    LightningBeam = 61,
+    Explosion1Nl = 62,
+    Explosion2Nl = 63,
+    // AQ2 — hit marker damage, unicast to the attacker
+    DamageDealt = 128,
 }
 
 // player_state stat indices we surface explicitly.

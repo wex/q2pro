@@ -1,5 +1,5 @@
 import { MvdDemoReader } from '../src/demo';
-import { MvdFrameParser, FrameEvent, ServerDataEvent, ConfigStringEvent, ChatEvent, ObituaryEvent, DeathEvent, SoundEvent, classifyHit, classifyChat, classifyObituary } from '../src/frame';
+import { MvdFrameParser, FrameEvent, ServerDataEvent, ConfigStringEvent, ChatEvent, ObituaryEvent, DeathEvent, SoundEvent, TempEntityEvent, MuzzleFlashEvent, classifyHit, classifyChat, classifyObituary } from '../src/frame';
 import { readDemoBytes } from './helpers/fixtures';
 import { StatsTracker } from '../src/stats';
 
@@ -524,5 +524,170 @@ describe('inner svc ops', () => {
             flags: 0, index: 9, volume: 1, attenuation: 1, timeOffset: 0,
             entity: 64, channel: 2, position: undefined,
         }]);
+    });
+});
+
+// ── Temp-entity format table (CL_ParseTEntPacket port) ───────────
+
+/** Vanilla coord encode: world * 8 as int16 triples (no EXTLIMITS_2). */
+function pos(x: number, y: number, z: number): Buffer {
+    return Buffer.concat([i16(x * 8), i16(y * 8), i16(z * 8)]);
+}
+
+/** svc_temp_entity op + type byte + payload. */
+function tent(type: number, payload: Buffer): Buffer {
+    return Buffer.concat([Buffer.from([3, type]), payload]);
+}
+
+describe('temp entity formats', () => {
+    function collect(parser: MvdFrameParser): TempEntityEvent[] {
+        const tes: TempEntityEvent[] = [];
+        parser.onTempEntity = (ev) => tes.push(ev);
+        return tes;
+    }
+
+    /** Every format: parse the TE, then prove the walk continues on the
+     *  trailing TE_BLOOD (the byte-level guarantee AUDIT-2 item 8 asks for). */
+    function expectParsed(payload: Buffer, expected: Partial<TempEntityEvent>): void {
+        const parser = new MvdFrameParser();
+        const tes = collect(parser);
+        parser.parse(mcastAll(Buffer.concat([payload, TE_BLOOD_VANILLA])));
+        expect(parser.parseWarningCount).toBe(0);
+        expect(tes).toHaveLength(2);
+        expect(tes[0]).toEqual(expect.objectContaining(expected));
+        expect(tes[1]).toEqual({ type: 1, position: [1, 2, 3], dir: 0 });
+    }
+
+    test('PosDir (newly covered Rogue/KEX types)', () => {
+        for (const t of [30, 46, 55, 58]) { // BLASTER2 ELECTRIC_SPARKS FLECHETTE BERSERK_SLAM
+            expectParsed(tent(t, Buffer.concat([pos(1, 2, 3), Buffer.from([7])])),
+                { type: t, position: [1, 2, 3], dir: 7 });
+        }
+    });
+
+    test('CountPosDirColor surfaces count+color', () => {
+        // TE_SPLASH=10: [count][pos][dir][color]
+        expectParsed(
+            tent(10, Buffer.concat([Buffer.from([4]), pos(1, 2, 3), Buffer.from([2, 0xe0])])),
+            { type: 10, count: 4, position: [1, 2, 3], dir: 2, color: 0xe0 },
+        );
+    });
+
+    test('PosPos (Rogue two-point types)', () => {
+        for (const t of [31, 34, 41, 57]) { // RAILTRAIL2 DEBUGTRAIL BUBBLETRAIL2 BFG_ZAP
+            expectParsed(tent(t, Buffer.concat([pos(1, 2, 3), pos(4, 5, 6)])),
+                { type: t, position: [1, 2, 3], endPosition: [4, 5, 6] });
+        }
+    });
+
+    test('PosOnly (AQ2 TE_TELEPORT_EFFECT + KEX variants)', () => {
+        for (const t of [48, 62, 63]) { // TELEPORT_EFFECT EXPLOSION1_NL EXPLOSION2_NL
+            expectParsed(tent(t, pos(1, 2, 3)), { type: t, position: [1, 2, 3] });
+        }
+    });
+
+    test('EntPosPos (heatbeam/grapple-2 beams surface entity)', () => {
+        for (const t of [38, 59]) { // HEATBEAM GRAPPLE_CABLE_2
+            expectParsed(
+                tent(t, Buffer.concat([i16(17), pos(1, 2, 3), pos(4, 5, 6)])),
+                { type: t, entity: 17, position: [1, 2, 3], endPosition: [4, 5, 6] },
+            );
+        }
+    });
+
+    test('AQ2 TE_GRAPPLE_CABLE carries entity + three positions', () => {
+        expectParsed(
+            tent(24, Buffer.concat([i16(9), pos(1, 2, 3), pos(4, 5, 6), pos(-1, 0, 1)])),
+            { type: 24, entity: 9, position: [1, 2, 3], endPosition: [4, 5, 6], offset: [-1, 0, 1] },
+        );
+    });
+
+    test('TE_LIGHTNING carries two entity numbers', () => {
+        expectParsed(
+            tent(33, Buffer.concat([i16(3), i16(4), pos(1, 2, 3), pos(4, 5, 6)])),
+            { type: 33, entity: 3, entity2: 4, position: [1, 2, 3], endPosition: [4, 5, 6] },
+        );
+    });
+
+    test('TE_FLASHLIGHT reads pos then entity', () => {
+        expectParsed(tent(36, Buffer.concat([pos(1, 2, 3), i16(8)])),
+            { type: 36, position: [1, 2, 3], entity: 8 });
+    });
+
+    test('TE_FORCEWALL reads pos pos color', () => {
+        expectParsed(
+            tent(37, Buffer.concat([pos(1, 2, 3), pos(4, 5, 6), Buffer.from([208])])),
+            { type: 37, position: [1, 2, 3], endPosition: [4, 5, 6], color: 208 },
+        );
+    });
+
+    test('TE_STEAM: conditional time only when entity != -1', () => {
+        // e1=-1 → no trailing long; e1=5 → time long follows e2.
+        expectParsed(
+            tent(40, Buffer.concat([
+                i16(-1), Buffer.from([3]), pos(1, 2, 3), Buffer.from([0, 0xf0]), i16(0),
+            ])),
+            { type: 40, entity: -1, count: 3, position: [1, 2, 3], dir: 0, color: 0xf0, entity2: 0 },
+        );
+        expectParsed(
+            tent(40, Buffer.concat([
+                i16(5), Buffer.from([3]), pos(1, 2, 3), Buffer.from([0, 0xf0]), i16(7), u32(4000),
+            ])),
+            { type: 40, entity: 5, count: 3, position: [1, 2, 3], dir: 0, color: 0xf0, entity2: 7, time: 4000 },
+        );
+    });
+
+    test('TE_WIDOWBEAMOUT + TE_POWER_SPLASH', () => {
+        expectParsed(tent(50, Buffer.concat([i16(12), pos(1, 2, 3)])),
+            { type: 50, entity: 12, position: [1, 2, 3] });
+        expectParsed(tent(60, Buffer.concat([i16(12), Buffer.from([200])])),
+            { type: 60, entity: 12, count: 200 });
+    });
+
+    test('AQ2 TE_DAMAGE_DEALT surfaces the damage short as count', () => {
+        expectParsed(tent(128, i16(37)), { type: 128, count: 37 });
+    });
+
+    test('TE_FLAME stays unsupported (C parser errors on it too)', () => {
+        const parser = new MvdFrameParser();
+        const warnings: number[] = [];
+        parser.onParseWarning = (w) => warnings.push(w.opcode);
+        const tes = collect(parser);
+        // The walk stops — trailing TE_BLOOD must NOT be parsed.
+        parser.parse(mcastAll(Buffer.concat([
+            tent(32, Buffer.from([0])), TE_BLOOD_VANILLA,
+        ])));
+        expect(warnings).toEqual([32]);
+        expect(tes).toEqual([{ type: 32 }]);
+    });
+
+    test('truncated TE payload stops the walk without crash', () => {
+        const parser = new MvdFrameParser();
+        const tes = collect(parser);
+        // GRAPPLE_CABLE needs 14 payload bytes; give it 4.
+        parser.parse(mcastAll(tent(24, Buffer.from([1, 2, 3, 4]))));
+        expect(tes).toEqual([]);
+        parser.parse(mcastAll(TE_BLOOD_VANILLA));
+        expect(tes).toHaveLength(1);
+    });
+});
+
+describe('muzzle flash ops', () => {
+    test('svc_muzzleflash masks the silenced bit', () => {
+        const parser = new MvdFrameParser();
+        const evs: MuzzleFlashEvent[] = [];
+        parser.onMuzzleFlash = (ev) => evs.push(ev);
+        // [op 1][entity u16][weapon u8] — weapon 0x82 = MZ_SHOTGUN|SILENCED.
+        parser.parse(mcastAll(Buffer.from([1, 5, 0, 0x82])));
+        expect(evs).toEqual([{ entity: 5, weapon: 2, silenced: true }]);
+    });
+
+    test('svc_muzzleflash2 does not mask weapon (MZ2 ids run past 127)', () => {
+        const parser = new MvdFrameParser();
+        const evs: MuzzleFlashEvent[] = [];
+        parser.onMuzzleFlash = (ev) => evs.push(ev);
+        // op 2, non-extended stream: weapon byte is the full MZ2_* id.
+        parser.parse(mcastAll(Buffer.from([2, 9, 0, 0x9f])));
+        expect(evs).toEqual([{ entity: 9, weapon: 0x9f, silenced: false }]);
     });
 });

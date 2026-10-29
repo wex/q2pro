@@ -255,6 +255,21 @@ export interface TempEntityEvent {
      *  hyperblaster trail, bubble trail). Represents the end/impact point
      *  while `position` is the start/muzzle point. */
     endPosition?: [number, number, number];
+    /** Third position for TE_GRAPPLE_CABLE (player-relative hook offset). */
+    offset?: [number, number, number];
+    /** First entity number (grapple/heatbeam/beam owners, steam source). */
+    entity?: number;
+    /** Second entity number (TE_LIGHTNING endpoints, TE_STEAM target). */
+    entity2?: number;
+    /** Particle count (splash/steam/power-splash) or hit damage
+     *  (TE_DAMAGE_DEALT). */
+    count?: number;
+    /** Encoded bytedir index (MSG_ReadDir raw byte). */
+    dir?: number;
+    /** Particle colour index (splash/steam/forcewall). */
+    color?: number;
+    /** TE_STEAM lifetime in ms (present only when entity != -1). */
+    time?: number;
 }
 
 export interface StatsEvent {
@@ -314,6 +329,118 @@ export interface SoundEvent {
 }
 
 // ── Frame parser ────────────────────────────────────────────────────
+
+/**
+ * Temp-entity payload shapes — one entry per `case` group in
+ * `CL_ParseTEntPacket` (src/client/parse.c). `pos` decodes via the same
+ * MSG_ES_EXTENSIONS_2-aware path as entity origins; `short` is read as a
+ * signed i16 (TE_STEAM uses -1 as a sentinel).
+ */
+const enum TeFmt {
+    /** [pos][dir] */
+    PosDir,
+    /** [count][pos][dir][color] */
+    CountPosDirColor,
+    /** [pos] */
+    PosOnly,
+    /** [pos][pos] */
+    PosPos,
+    /** [e1 short][pos][pos] */
+    EntPosPos,
+    /** [e1 short][pos][pos][offset pos] — TE_GRAPPLE_CABLE */
+    EntPosPosPos,
+    /** [e1 short][e2 short][pos][pos] — TE_LIGHTNING */
+    EntEntPosPos,
+    /** [pos][e1 short] — TE_FLASHLIGHT */
+    PosEnt,
+    /** [pos][pos][color] — TE_FORCEWALL */
+    PosPosColor,
+    /** [e1][count][pos][dir][color][e2]([time] when e1 != -1) — TE_STEAM */
+    Steam,
+    /** [e1 short][pos] — TE_WIDOWBEAMOUT */
+    EntPos,
+    /** [e1 short][count byte] — TE_POWER_SPLASH */
+    EntCount,
+    /** [count short] — TE_DAMAGE_DEALT */
+    ShortOnly,
+}
+
+/**
+ * temp_event_t → wire format. TE_FLAME (32) is deliberately absent: the C
+ * client errors on it too (no case in CL_ParseTEntPacket), so there is no
+ * usable mapping to port — it remains an `unknown_temp_entity` warning.
+ */
+const TE_FORMAT: ReadonlyMap<number, TeFmt> = new Map<number, TeFmt>([
+    [TempEntityType.Blood, TeFmt.PosDir],
+    [TempEntityType.Gunshot, TeFmt.PosDir],
+    [TempEntityType.Sparks, TeFmt.PosDir],
+    [TempEntityType.BulletSparks, TeFmt.PosDir],
+    [TempEntityType.ScreenSparks, TeFmt.PosDir],
+    [TempEntityType.ShieldSparks, TeFmt.PosDir],
+    [TempEntityType.Shotgun, TeFmt.PosDir],
+    [TempEntityType.Blaster, TeFmt.PosDir],
+    [TempEntityType.GreenBlood, TeFmt.PosDir],
+    [TempEntityType.Blaster2, TeFmt.PosDir],
+    [TempEntityType.Flechette, TeFmt.PosDir],
+    [TempEntityType.HeatbeamSparks, TeFmt.PosDir],
+    [TempEntityType.HeatbeamSteam, TeFmt.PosDir],
+    [TempEntityType.MoreBlood, TeFmt.PosDir],
+    [TempEntityType.ElectricSparks, TeFmt.PosDir],
+    [TempEntityType.BlueHyper2, TeFmt.PosDir],
+    [TempEntityType.BerserkSlam, TeFmt.PosDir],
+
+    [TempEntityType.Splash, TeFmt.CountPosDirColor],
+    [TempEntityType.LaserSparks, TeFmt.CountPosDirColor],
+    [TempEntityType.WeldingSparks, TeFmt.CountPosDirColor],
+    [TempEntityType.TunnelSparks, TeFmt.CountPosDirColor],
+
+    [TempEntityType.BlueHyper, TeFmt.PosPos],
+    [TempEntityType.RailTrail, TeFmt.PosPos],
+    [TempEntityType.RailTrail2, TeFmt.PosPos],
+    [TempEntityType.BubbleTrail, TeFmt.PosPos],
+    [TempEntityType.DebugTrail, TeFmt.PosPos],
+    [TempEntityType.BubbleTrail2, TeFmt.PosPos],
+    [TempEntityType.BfgLaser, TeFmt.PosPos],
+    [TempEntityType.BfgZap, TeFmt.PosPos],
+
+    [TempEntityType.GrenadeExpl, TeFmt.PosOnly],
+    [TempEntityType.GrenadeExplWat, TeFmt.PosOnly],
+    [TempEntityType.Explosion2, TeFmt.PosOnly],
+    [TempEntityType.PlasmaExpl, TeFmt.PosOnly],
+    [TempEntityType.RocketExpl, TeFmt.PosOnly],
+    [TempEntityType.RocketExplWat, TeFmt.PosOnly],
+    [TempEntityType.Explosion1, TeFmt.PosOnly],
+    [TempEntityType.Explosion1Np, TeFmt.PosOnly],
+    [TempEntityType.Explosion1Big, TeFmt.PosOnly],
+    [TempEntityType.BfgExplosion, TeFmt.PosOnly],
+    [TempEntityType.BfgBigExpl, TeFmt.PosOnly],
+    [TempEntityType.BossTport, TeFmt.PosOnly],
+    [TempEntityType.PlainExplosion, TeFmt.PosOnly],
+    [TempEntityType.ChainfistSmoke, TeFmt.PosOnly],
+    [TempEntityType.TrackerExplosion, TeFmt.PosOnly],
+    [TempEntityType.TeleportEffect, TeFmt.PosOnly],
+    [TempEntityType.DballGoal, TeFmt.PosOnly],
+    [TempEntityType.Widowsplash, TeFmt.PosOnly],
+    [TempEntityType.Nukeblast, TeFmt.PosOnly],
+    [TempEntityType.Explosion1Nl, TeFmt.PosOnly],
+    [TempEntityType.Explosion2Nl, TeFmt.PosOnly],
+
+    [TempEntityType.ParasiteAtk, TeFmt.EntPosPos],
+    [TempEntityType.MedicCableAtk, TeFmt.EntPosPos],
+    [TempEntityType.Heatbeam, TeFmt.EntPosPos],
+    [TempEntityType.MonsterHeatbeam, TeFmt.EntPosPos],
+    [TempEntityType.GrappleCable2, TeFmt.EntPosPos],
+    [TempEntityType.LightningBeam, TeFmt.EntPosPos],
+
+    [TempEntityType.GrappleCable, TeFmt.EntPosPosPos],
+    [TempEntityType.Lightning, TeFmt.EntEntPosPos],
+    [TempEntityType.Flashlight, TeFmt.PosEnt],
+    [TempEntityType.Forcewall, TeFmt.PosPosColor],
+    [TempEntityType.Steam, TeFmt.Steam],
+    [TempEntityType.Widowbeamout, TeFmt.EntPos],
+    [TempEntityType.PowerSplash, TeFmt.EntCount],
+    [TempEntityType.DamageDealt, TeFmt.ShortOnly],
+]);
 
 export class MvdFrameParser {
     private playerStates: Map<number, PlayerState> = new Map();
@@ -1087,104 +1214,110 @@ export class MvdFrameParser {
             entity &= 0x1fff;
         }
         const silenced = isPlayerFlash && (weapon & 0x80) !== 0;
+        // MZ_SILENCED (0x80) only exists on svc_muzzleflash — monster flash
+        // ids (MZ2_*) and the extended-protocol high bits must not be masked.
         this.onMuzzleFlash?.({
             entity,
-            weapon: weapon & 0x7f,
+            weapon: isPlayerFlash ? weapon & 0x7f : weapon,
             silenced,
         });
         return true;
     }
 
-    // ── Temp-entity parsing (enough to surface hit events) ──────────
+    // ── Temp-entity parsing ─────────────────────────────────────────
 
     /** Returns false if parsing cannot safely continue on the inner reader. */
     private parseTempEntity(r: BufferReader): boolean {
         if (r.remaining < 1) return false;
         const type = r.readUInt8();
 
-        // Types that carry [pos pos pos dir]
-        const POS_DIR = [
-            TempEntityType.Gunshot,
-            TempEntityType.Blood,
-            TempEntityType.Sparks,
-            TempEntityType.BulletSparks,
-            TempEntityType.ScreenSparks,
-            TempEntityType.ShieldSparks,
-            TempEntityType.Shotgun,
-            TempEntityType.Blaster,
-            TempEntityType.GreenBlood,
-            TempEntityType.MoreBlood,
-        ];
-
-        // Types that carry [count pos pos pos dir color]
-        const COUNT_POS_DIR_COLOR = [
-            TempEntityType.Splash,
-            TempEntityType.LaserSparks,
-            TempEntityType.WeldingSparks,
-            TempEntityType.TunnelSparks,
-        ];
-
-        // Types that carry just [pos]
-        const POS_ONLY = [
-            TempEntityType.GrenadeExpl,
-            TempEntityType.GrenadeExplWat,
-            TempEntityType.Explosion2,
-            TempEntityType.PlasmaExpl,
-            TempEntityType.RocketExpl,
-            TempEntityType.RocketExplWat,
-            TempEntityType.Explosion1,
-            TempEntityType.BfgExplosion,
-            TempEntityType.BfgBigExpl,
-            TempEntityType.BossTport,
-        ];
-
-        // Types that carry [pos pos]
-        const POS_POS = [
-            TempEntityType.BlueHyper,
-            TempEntityType.RailTrail,
-            TempEntityType.BubbleTrail,
-            TempEntityType.BfgLaser,
-        ];
-
-        try {
-            if (POS_DIR.includes(type)) {
-                const pos = this.readPos(r);
-                r.readUInt8(); // dir
-                this.onTempEntity?.({ type, position: pos });
-                return true;
-            }
-            if (COUNT_POS_DIR_COLOR.includes(type)) {
-                r.readUInt8(); // count
-                const pos = this.readPos(r);
-                r.readUInt8(); // dir
-                r.readUInt8(); // color
-                this.onTempEntity?.({ type, position: pos });
-                return true;
-            }
-            if (POS_ONLY.includes(type)) {
-                const pos = this.readPos(r);
-                this.onTempEntity?.({ type, position: pos });
-                return true;
-            }
-            if (POS_POS.includes(type)) {
-                const pos = this.readPos(r);
-                const endPos = this.readPos(r);
-                this.onTempEntity?.({ type, position: pos, endPosition: endPos });
-                return true;
-            }
-        } catch {
+        const fmt = TE_FORMAT.get(type);
+        if (fmt === undefined) {
+            // Unknown or variable-format TE — we can't walk past it safely.
+            this.parseWarningCount++;
+            this.onParseWarning?.({
+                code: 'unknown_temp_entity',
+                opcode: type,
+                offset: r.position,
+            });
+            this.onTempEntity?.({ type });
             return false;
         }
 
-        // Unknown or variable-format TE — we can't walk past it safely.
-        this.parseWarningCount++;
-        this.onParseWarning?.({
-            code: 'unknown_temp_entity',
-            opcode: type,
-            offset: r.position,
-        });
-        this.onTempEntity?.({ type });
-        return false;
+        try {
+            // Evaluate the field read unconditionally — `?.()` would skip
+            // evaluating its arguments when no listener is attached, leaving
+            // the inner reader misaligned on listener-less parses.
+            const ev = this.readTempEntityFields(r, fmt, type);
+            this.onTempEntity?.(ev);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /** Consume one TE payload per format; mirrors CL_ParseTEntPacket. */
+    private readTempEntityFields(r: BufferReader, fmt: TeFmt, type: number): TempEntityEvent {
+        switch (fmt) {
+            case TeFmt.PosDir:
+                return { type, position: this.readPos(r), dir: r.readUInt8() };
+            case TeFmt.CountPosDirColor:
+                return {
+                    type,
+                    count: r.readUInt8(),
+                    position: this.readPos(r),
+                    dir: r.readUInt8(),
+                    color: r.readUInt8(),
+                };
+            case TeFmt.PosOnly:
+                return { type, position: this.readPos(r) };
+            case TeFmt.PosPos:
+                return { type, position: this.readPos(r), endPosition: this.readPos(r) };
+            case TeFmt.EntPosPos:
+                return { type, entity: r.readInt16LE(), position: this.readPos(r), endPosition: this.readPos(r) };
+            case TeFmt.EntPosPosPos:
+                return {
+                    type,
+                    entity: r.readInt16LE(),
+                    position: this.readPos(r),
+                    endPosition: this.readPos(r),
+                    offset: this.readPos(r),
+                };
+            case TeFmt.EntEntPosPos:
+                return {
+                    type,
+                    entity: r.readInt16LE(),
+                    entity2: r.readInt16LE(),
+                    position: this.readPos(r),
+                    endPosition: this.readPos(r),
+                };
+            case TeFmt.PosEnt:
+                return { type, position: this.readPos(r), entity: r.readInt16LE() };
+            case TeFmt.PosPosColor:
+                return { type, position: this.readPos(r), endPosition: this.readPos(r), color: r.readUInt8() };
+            case TeFmt.Steam: {
+                // [e1 short][count byte][pos][dir][color][e2 short]
+                // [time long] only when e1 != -1 — CL_ParseTEntPacket.
+                const entity = r.readInt16LE();
+                const ev: TempEntityEvent = {
+                    type,
+                    entity,
+                    count: r.readUInt8(),
+                    position: this.readPos(r),
+                    dir: r.readUInt8(),
+                    color: r.readUInt8(),
+                    entity2: r.readInt16LE(),
+                };
+                if (entity !== -1) ev.time = r.readInt32LE();
+                return ev;
+            }
+            case TeFmt.EntPos:
+                return { type, entity: r.readInt16LE(), position: this.readPos(r) };
+            case TeFmt.EntCount:
+                return { type, entity: r.readInt16LE(), count: r.readUInt8() };
+            case TeFmt.ShortOnly:
+                return { type, count: r.readInt16LE() };
+        }
     }
 
     private readPos(r: BufferReader): [number, number, number] {
