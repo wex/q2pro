@@ -143,12 +143,17 @@ export class Session {
     private readonly broadcast: (event: string, data: unknown) => void;
     private readonly statusQuery: (host: string, port: number) => void;
     private statsTimer: ReturnType<typeof setTimeout> | null = null;
+    /** True while parsing a seek catch-up message — broadcasts are
+     *  suppressed so the UI sees one state rebuild, not a frame storm. */
+    private silentCatchup = false;
 
     constructor(id: string, opts: SessionOptions) {
         this.id = id;
         this.host = opts.host;
         this.port = opts.port;
-        this.broadcast = opts.broadcast;
+        this.broadcast = (event, data) => {
+            if (!this.silentCatchup) opts.broadcast(event, data);
+        };
         this.statusQuery = opts.statusQuery;
         this.client = new MvdClient({
             host: this.host,
@@ -503,12 +508,17 @@ export class Session {
         this.currentReplay = reader;
         this.currentReplayFile = filePath;
 
-        reader.on('message', (buf) => {
+        reader.on('message', (buf, catchup) => {
+            // Catch-up messages rebuild parser/derived state silently —
+            // the 'seeked' replayState broadcast carries the outcome.
+            this.silentCatchup = catchup;
             try {
                 this.parser.parse(buf);
             } catch (err) {
                 console.error('[replay] Parse error, dropping frame:', err);
                 this.parser.reset();
+            } finally {
+                this.silentCatchup = false;
             }
         });
         reader.on('end', () => {
@@ -524,11 +534,11 @@ export class Session {
             this.broadcast('replayError', { session: this.id, message: err.message });
         });
         // A seek jumps to an earlier keyframe; all derived state rebuilds
-        // from there.
+        // from the silent catch-up span that follows ('seeked').
         reader.on('seek', () => {
             this.resetPipelineState();
-            this.broadcastReplayState();
         });
+        reader.on('seeked', () => this.broadcastReplayState());
         reader.on('pause', () => this.broadcastReplayState());
         reader.on('resume', () => this.broadcastReplayState());
 

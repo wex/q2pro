@@ -40,7 +40,7 @@ reader.play('assets/demos/demo.mvd2');
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `realtime` | `boolean` | `false` | Emit one message per tick (mimics live stream) |
+| `realtime` | `boolean` | `false` | Emit one server frame per tick (mimics live stream) |
 | `tickMs` | `number` | `100` | Tick interval when `realtime` is true (10 Hz) |
 
 ### Methods
@@ -49,24 +49,34 @@ reader.play('assets/demos/demo.mvd2');
 - **`playBuffer(buf)`** — same, but from an in-memory buffer (useful for tests
   or pre-inflated `.mvd2.gz` payloads).
 - **`stop()`** — cancel pacing and drop queued messages.
+- **`pause()` / `resume()`** — gate the realtime timer without losing position.
+- **`seek(targetIndex)`** — snap to the nearest keyframe ≤ target, silently
+  re-emit `[keyframe, target)` as catch-up, then resume realtime there.
+- **`setSpeed(m)`** — scale the tick interval, clamped to [0.25, 8].
+
+See `doc/demo-controls.md` for the full playback-controls reference.
 
 ### Events
 
 | Event | Payload | When |
 |---|---|---|
-| `message` | `Buffer` | One `.mvd2` record (feed into `MvdFrameParser.parse`) |
+| `message` | `Buffer`, `catchup: boolean` | One `.mvd2` record (feed into `MvdFrameParser.parse`). `catchup` is true for seek-time silent rebuilds — parse but suppress outward broadcasts. |
 | `end` | — | EOF marker reached or all messages emitted |
 | `error` | `Error` | File missing, bad magic, truncated record |
+| `seek` | snapped index | `seek()` resolved to a keyframe — reset parser state |
+| `seeked` | target index | Silent catch-up finished; realtime resumes from here |
+| `pause` / `resume` | — | Playback gated / ungated |
 
 ## Pacing notes
 
 Real `.mvd2` files interleave configstrings, multicasts and frames without
-timestamps. In `realtime` mode this reader emits one **message** per tick
-rather than one **frame** — simple and sufficient for test-material playback.
+timestamps. In `realtime` mode each tick bursts every message up to and
+including the next one whose first op is `mvd_frame` — one *server frame*
+per tick, so frame-less runs and multi-frame messages keep live pacing.
 Use default non-realtime mode for synchronous test runs.
 
 ## Out of scope
 
 - No gzip / `.mvd2.gz` decoding (call `zlib.gunzipSync` yourself and hand the
   result to `playBuffer`).
-- No seeking, pausing, or looping — linear playback only.
+- No looping — playback ends at EOF (seeking backward after `end` works).

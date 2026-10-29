@@ -69,8 +69,15 @@ describe('MvdDemoReader realtime pacing', () => {
     beforeEach(() => jest.useFakeTimers());
     afterEach(() => jest.useRealTimers());
 
-    test('emits one message per tick', () => {
-        const msgs = [Buffer.from([1]), Buffer.from([2]), Buffer.from([3])];
+    const F = () => Buffer.from([MvdOp.Frame]);
+    const N = () => Buffer.from([MvdOp.Nop]);
+    const SD = Buffer.from([MvdOp.ServerData]);
+    const CS = Buffer.from([MvdOp.ConfigString]);
+
+    test('paces one server frame per tick — frameless messages ride the burst', () => {
+        // [SD, F, CS, F, N, N, F] → bursts end after each frame-leading
+        // message: tick1 SD+F, tick2 CS+F, tick3 N+N+F.
+        const msgs = [SD, F(), CS, F(), N(), N(), F()];
         const mvd = buildMvd2(msgs, true);
 
         const reader = new MvdDemoReader({ realtime: true, tickMs: 10 });
@@ -80,15 +87,15 @@ describe('MvdDemoReader realtime pacing', () => {
 
         expect(received).toHaveLength(0);
         jest.advanceTimersByTime(10);
-        expect(received).toHaveLength(1);
+        expect(received).toEqual([SD, msgs[1]]);
         jest.advanceTimersByTime(10);
-        expect(received).toHaveLength(2);
+        expect(received).toHaveLength(4);
         jest.advanceTimersByTime(10);
-        expect(received).toHaveLength(3);
+        expect(received).toHaveLength(7);
     });
 
     test('stop() halts further emissions and skips end', () => {
-        const msgs = [Buffer.from([1]), Buffer.from([2])];
+        const msgs = [F(), F()];
         const reader = new MvdDemoReader({ realtime: true, tickMs: 10 });
         const received: Buffer[] = [];
         let endFired = false;
@@ -105,7 +112,7 @@ describe('MvdDemoReader realtime pacing', () => {
     });
 
     test('re-play clears the previous tick timer (no double-speed)', () => {
-        const msgs = [Buffer.from([1]), Buffer.from([2]), Buffer.from([3]), Buffer.from([4])];
+        const msgs = [F(), F(), F(), F()];
         const mvd = buildMvd2(msgs, true);
         const reader = new MvdDemoReader({ realtime: true, tickMs: 10 });
         const received: Buffer[] = [];
@@ -131,12 +138,13 @@ describe('MvdDemoReader playback controls', () => {
 
     const SD = Buffer.from([MvdOp.ServerData]);
     const N = () => Buffer.from([MvdOp.Nop]);
+    const F = () => Buffer.from([MvdOp.Frame]);
 
     test('pause() freezes emission, resume() continues from the cursor', () => {
         const reader = new MvdDemoReader({ realtime: true, tickMs: 10 });
         const received: Buffer[] = [];
         reader.on('message', (m) => received.push(m));
-        reader.playBuffer(buildMvd2([SD, N(), N(), N()]));
+        reader.playBuffer(buildMvd2([F(), N(), N(), F()]));
 
         jest.advanceTimersByTime(10);
         expect(received).toHaveLength(1);
@@ -147,48 +155,61 @@ describe('MvdDemoReader playback controls', () => {
 
         reader.resume();
         jest.advanceTimersByTime(10);
-        expect(received).toHaveLength(2);
+        expect(received).toHaveLength(4); // N+N+F in one burst
     });
 
-    test('seek() snaps back to the preceding serverdata keyframe', () => {
-        // Indices: 0=SD, 1..2=N, 3=SD, 4=N → keyframes [0, 3].
-        const msgs = [SD, N(), N(), SD, N()];
+    test('seek() snaps to a keyframe, catch-up is silent, seeked lands on target', () => {
+        // Indices: 0=SD, 1..2=F, 3=SD, 4..5=F → keyframes [0, 3].
+        const msgs = [SD, F(), F(), SD, F(), F()];
         const reader = new MvdDemoReader({ realtime: true, tickMs: 10 });
-        const received: Buffer[] = [];
+        const seen: Array<{ m: Buffer; catchup: boolean }> = [];
         let snappedTo = -1;
-        reader.on('message', (m) => received.push(m));
+        let seekedTo = -1;
+        reader.on('message', (m, catchup) => seen.push({ m, catchup }));
         reader.on('seek', (i) => (snappedTo = i));
+        reader.on('seeked', (i) => (seekedTo = i));
         reader.playBuffer(buildMvd2(msgs));
 
-        jest.advanceTimersByTime(20);
-        expect(received).toHaveLength(2);
+        jest.advanceTimersByTime(20); // tick1 SD+F, tick2 F
+        expect(seen).toHaveLength(3);
 
-        const snapped = reader.seek(4);
+        const snapped = reader.seek(5);
         expect(snapped).toBe(3);
         expect(snappedTo).toBe(3);
-        expect(reader.position).toBe(3);
+        expect(reader.position).toBe(5);
+        expect(seekedTo).toBe(5);
+        // Messages 3,4 re-emitted silently; realtime resumes at 5.
+        expect(seen.slice(3)).toEqual([
+            { m: msgs[3], catchup: true },
+            { m: msgs[4], catchup: true },
+        ]);
 
-        received.length = 0;
         jest.advanceTimersByTime(10);
-        expect(received).toEqual([SD]); // replays from message 3
-        jest.advanceTimersByTime(10);
-        expect(received).toHaveLength(2);
+        expect(seen[5]).toEqual({ m: msgs[5], catchup: false });
     });
 
-    test('seek() while paused moves the cursor without resuming', () => {
-        const msgs = [SD, N(), N(), N()];
+    test('seek() while paused rebuilds silently without resuming', () => {
+        const msgs = [SD, F(), F(), F()];
         const reader = new MvdDemoReader({ realtime: true, tickMs: 10 });
+        const seen: Array<{ m: Buffer; catchup: boolean }> = [];
+        reader.on('message', (m, catchup) => seen.push({ m, catchup }));
         reader.playBuffer(buildMvd2(msgs));
         reader.pause();
-        const snapped = reader.seek(3);
-        expect(snapped).toBe(0); // only keyframe is index 0
+        const snapped = reader.seek(2);
+        expect(snapped).toBe(0);
         expect(reader.paused).toBe(true);
+        // Catch-up still feeds the parser (paused scrubbing), flagged silent.
+        expect(seen).toEqual([
+            { m: msgs[0], catchup: true },
+            { m: msgs[1], catchup: true },
+        ]);
+        expect(reader.position).toBe(2);
         jest.advanceTimersByTime(50);
-        expect(reader.position).toBe(0); // nothing emitted while paused
+        expect(seen).toHaveLength(2); // nothing emitted while paused
     });
 
     test('seek() after natural end replays retained messages', () => {
-        const msgs = [SD, N(), N()];
+        const msgs = [SD, F(), N()];
         const reader = new MvdDemoReader({ realtime: true, tickMs: 10 });
         const received: Buffer[] = [];
         let endCount = 0;
@@ -207,7 +228,7 @@ describe('MvdDemoReader playback controls', () => {
     });
 
     test('setSpeed() scales the tick interval and clamps to [0.25, 8]', () => {
-        const msgs = [SD, N(), N(), N(), N()];
+        const msgs = [F(), F(), F(), F(), F()];
         const reader = new MvdDemoReader({ realtime: true, tickMs: 10 });
         const received: Buffer[] = [];
         reader.on('message', (m) => received.push(m));

@@ -12,11 +12,17 @@ export interface MvdDemoReaderOptions {
 }
 
 export interface MvdDemoReaderEventMap {
-    message: [data: Buffer];
+    /** `catchup` is true for messages emitted by seek()'s silent rebuild —
+     *  feed them to the parser but suppress outward broadcasts so the UI
+     *  does not see a fast-forward storm (see doc/demo-controls.md). */
+    message: [data: Buffer, catchup: boolean];
     end: [];
     error: [err: Error];
     /** Fired after seek() — payload is the snapped keyframe index. */
     seek: [index: number];
+    /** Fired when seek()'s silent catch-up completes; the cursor is at the
+     *  requested target and realtime playback resumes from here. */
+    seeked: [index: number];
     pause: [];
     resume: [];
 }
@@ -48,7 +54,15 @@ const MAX_SPEED = 8;
  * Playback controls: pause()/resume() gate the realtime timer; seek(n)
  * snaps back to the nearest preceding keyframe (mvd_serverdata /
  * mvd_framenodelta) because frames are delta-compressed — consumers must
- * reset their parser on the `seek` event; setSpeed(m) scales the tick.
+ * reset their parser on the `seek` event — then silently re-emits the
+ * messages between keyframe and target flagged `catchup=true` so parser
+ * state rebuilds immediately (`seeked` marks the end of the span);
+ * setSpeed(m) scales the tick.
+ *
+ * Realtime pacing emits one *server frame* per tick, not one message:
+ * each tick bursts every message up to and including the next one whose
+ * first op is mvd_frame, so frame-less runs (configstring bursts, unicast
+ * batches) and messages batching several frames keep live pacing.
  */
 export class MvdDemoReader extends EventEmitter {
     private readonly opts: Required<MvdDemoReaderOptions>;
@@ -183,6 +197,14 @@ export class MvdDemoReader extends EventEmitter {
         this.stopped = false;
         this.finished = false;
         this.emit('seek', snapped);
+        // Silent catch-up: re-feed [snapped, target) flagged catchup=true so
+        // the parser rebuilds delta state at the requested position right
+        // now instead of replaying the gap at realtime speed. Runs while
+        // paused too — scrubbing a paused replay should still rebuild state.
+        while (this.cursor < target && !this.stopped) {
+            this.emit('message', this.messages[this.cursor++], true);
+        }
+        this.emit('seeked', this.cursor);
         if (!this.isPaused) {
             if (this.opts.realtime) {
                 this.scheduleTick();
@@ -247,7 +269,7 @@ export class MvdDemoReader extends EventEmitter {
         if (this.stopped) return;
         while (this.cursor < this.messages.length) {
             if (this.stopped) return;
-            this.emit('message', this.messages[this.cursor++]);
+            this.emit('message', this.messages[this.cursor++], false);
         }
         this.finish();
     }
@@ -270,7 +292,20 @@ export class MvdDemoReader extends EventEmitter {
             this.finish();
             return;
         }
-        this.emit('message', this.messages[this.cursor++]);
+        // One server frame per tick: burst every message up to and including
+        // the next one that *starts* with mvd_frame. Frame-less messages ride
+        // along with the surrounding frame's tick (first-byte heuristic —
+        // a frame op mid-message still paces with its batch's tick).
+        do {
+            const m = this.messages[this.cursor++];
+            this.emit('message', m, false);
+            if (this.stopped) return;
+            if ((m[0] & SVCMD_MASK) === MvdOp.Frame) break;
+        } while (this.cursor < this.messages.length);
+        if (this.cursor >= this.messages.length) {
+            this.finish();
+            return;
+        }
         this.scheduleTick();
     }
 
