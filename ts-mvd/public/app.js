@@ -992,8 +992,21 @@ function renderTeamScores() {
 }
 
 /** Match-stats panel fed by the 'stats' SSE snapshot (see doc/session-stats.md). */
+let lastRoundIndex = null;   // latest round index seen in stats snapshots
+
 function renderStats(snap) {
     if (!elStatsBody || !snap || !snap.totals) return;
+    // New round opened (ACTION!/FIGHT!/etc. — noteText broadcasts stats
+    // immediately on boundary text) → reset the kill feed. Baseline the
+    // index on first snapshot / after serverdata without clearing.
+    const rounds = snap.rounds || [];
+    const latestIdx = rounds.length ? rounds[rounds.length - 1].index : -1;
+    if (lastRoundIndex === null) {
+        lastRoundIndex = latestIdx;
+    } else if (latestIdx !== lastRoundIndex) {
+        lastRoundIndex = latestIdx;
+        if (elKillfeed) elKillfeed.innerHTML = '';
+    }
     const rows = Object.entries(snap.totals.players || {})
         .map(([name, p]) => ({ name, ...p }))
         .sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));
@@ -1250,6 +1263,7 @@ function connectSSE() {
         // the previous stream must not bleed into the new one.
         elKillfeed.innerHTML = '';
         elChat.innerHTML = '';
+        lastRoundIndex = null;
         scoreboardState = { teamScores: { team1: 0, team2: 0, team3: 0 }, layoutsFlags: 0, layoutText: '', players: {} };
         loadoutCache = {};
         lockedPlayerNum = null;

@@ -85,3 +85,12 @@ stats.reset();
 Exported from `index.ts`: `StatsTracker`, `StatsTrackerOptions`,
 `StatsSnapshot`, `PlayerRoundStats`, `RoundStats`, `DEFAULT_ROUND_PATTERNS`,
 `DEFAULT_END_PATTERNS`.
+
+## UI
+
+The Match-stats panel renders `totals.players` (Name / K / D / Hits). The
+browser also watches `rounds[]`'s latest `index` in `renderStats()`: a bump
+means a new round opened (boundary text triggers an immediate — not
+coalesced — `stats` broadcast), so the kill feed is cleared. `serverdata`
+resets the baseline so session/replay switches don't clear on the first
+snapshot.
