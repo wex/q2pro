@@ -51,6 +51,21 @@ Properties:
 sort by kills. Damage lands under the per-round rows in the snapshot for
 consumers that render rounds.
 
+## Troubleshooting: `Dmg` shows all zeros
+
+`Dmg` only accumulates when the stream actually carries `TE_DAMAGE_DEALT`.
+Run the app with `TS_MVD_DEBUG=1 npm run app` — every arriving event logs
+`[te] DAMAGE_DEALT client=N amount=M`. If none appear:
+
+- **Replay of the bundled demo** — it predates hit markers and contains no
+  `TE_DAMAGE_DEALT` at all; zeros are expected.
+- **Attackers on old clients** — AQ2 only emits the TE when the attacker's
+  client speaks a hit-marker protocol (36 ≥ 1025 / 38 ≥ 3017) and isn't a
+  bot. A server full of old clients produces zero events even though the
+  game tracks `damage_dealt` internally.
+- **Non-AQ2 / old server** — the TE is AQ2/TNG-era; vanilla and older game
+  DLLs never send it.
+
 ## Verification
 
 `test/frame.test.ts` — unicast `TE_DAMAGE_DEALT` carries `clientNum`,

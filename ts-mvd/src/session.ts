@@ -382,6 +382,7 @@ export class Session {
                 && ev.clientNum !== undefined
                 && ev.count !== undefined
             ) {
+                if (DEBUG) console.log(`[te] DAMAGE_DEALT client=${ev.clientNum} amount=${ev.count}`);
                 this.stats.noteDamageDealt({ attacker: ev.clientNum, damage: ev.count });
                 this.scheduleStatsBroadcast();
             }
