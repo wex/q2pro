@@ -402,13 +402,31 @@ export class Session {
 
         parser.onSound = (ev: SoundEvent) => {
             const name = this.configstrings.get(csLayout(this.csExtended).sounds + ev.index);
+            // The outer mvd_sound op never carries SND_POS — Q2Pro's own
+            // server derives the entity origin when re-emitting the sound to
+            // real clients (MVD_ParseSound). Do the same here so footsteps,
+            // pain calls and weapon noise ping on the map. Only player edicts
+            // (1..maxclients → clientNum entity-1) resolve; the position can
+            // lag a frame for sounds parsed before mvd_frame in the same
+            // message. Wire-provided positions (inner svc_sound SND_POS)
+            // always win.
+            let position = ev.position;
+            let derived = false;
+            if (!position && ev.entity > 0) {
+                const p = this.players.get(ev.entity - 1);
+                if (p) {
+                    position = p.origin;
+                    derived = true;
+                }
+            }
             this.broadcast('sound', {
                 session: this.id,
                 index: ev.index,
                 name,
                 channel: ev.channel,
                 entity: ev.entity,
-                position: ev.position,
+                position,
+                posDerived: derived || undefined,
                 volume: ev.volume,
                 attenuation: ev.attenuation,
                 t: Date.now(),

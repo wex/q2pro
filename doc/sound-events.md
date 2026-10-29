@@ -71,9 +71,22 @@ configstring range populated).
 
 `public/app.js` renders events that carry a `position` as a cyan expanding
 ring on the map (700 ms TTL, radius scales with volume, capped at 64 live
-pings). Sounds without a position — every outer `mvd_sound`, and inner
-sounds flagged only `SND_ENT` — still reach the SSE feed but are not
-pinged, since a position would have to be guessed from entity state.
+pings).
+
+The outer `mvd_sound` op never carries `SND_POS` — the server derives the
+entity's origin when re-emitting to real clients. `Session` mirrors that:
+when an entity-attached event has no wire position, it looks up
+`players.get(entity - 1)` (edicts 1..maxclients are the game clients) and
+broadcasts the player's last frame origin as `position`, flagged
+`posDerived: true`. This covers footsteps, pain calls, and any other
+`gi.sound()`-style audio; the derived position can lag one frame when the
+sound op precedes `mvd_frame` in the same message. The UI renders derived
+pings as a smaller, dimmer pulse to distinguish "player made noise" from
+positional impacts. Wire `SND_POS` positions always win.
+
+Sounds that resolve no entity (world edicts, `entity: 0` auto-positioned,
+or slots with no live playerstate) still reach the SSE feed unpositioned
+and are not pinged.
 
 ## Usage
 

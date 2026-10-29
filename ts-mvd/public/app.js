@@ -278,6 +278,7 @@ function handleSound(ev) {
         y: ev.position[1],
         t0: performance.now(),
         vol: typeof ev.volume === 'number' ? ev.volume : 1,
+        derived: !!ev.posDerived,
     });
     if (soundPings.length > SOUND_PING_MAX) soundPings.shift();
     scheduleRender(PLAYERS_DIRTY);
@@ -538,8 +539,11 @@ function renderPlayers() {
         alivePings++;
         const [cx, cy] = worldToSvg(p.x, p.y);
         const t = age / SOUND_PING_TTL_MS;
-        const alpha = 1 - t;
-        const radius = (8 + t * 32) * (0.7 + p.vol * 0.6);
+        // Entity-attached sounds (footsteps, pain) ping at the emitting
+        // player's position — render a smaller, dimmer pulse so they read as
+        // "noise" rather than a positional impact.
+        const alpha = (1 - t) * (p.derived ? 0.55 : 1);
+        const radius = (8 + t * (p.derived ? 18 : 32)) * (0.7 + p.vol * 0.6);
         ctx.beginPath();
         ctx.arc(cx, cy, radius, 0, Math.PI * 2);
         ctx.strokeStyle = rgba(COLOUR_SOUND, alpha * 0.85);

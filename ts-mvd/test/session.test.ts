@@ -74,6 +74,52 @@ describe('replay seek catch-up', () => {
     });
 });
 
+describe('entity-attached sound pings', () => {
+    const frameWithPlayer = (num: number, origin: [number, number, number]) => ({
+        frameNumber: 1,
+        players: [{
+            number: num, inUse: true, pmType: 0, origin,
+            viewangles: [0, 0, 0] as [number, number, number],
+            viewoffset: [0, 0, 0] as [number, number, number],
+            fov: 90, gunindex: 0, rdflags: 0, frags: 0,
+            stats: new Int16Array(32), isMvdDummy: false,
+        }],
+        teamScores: { team1: 0, team2: 0, team3: 0 },
+        layoutsFlags: 0,
+    });
+    const snd = (entity: number, position?: [number, number, number]) => ({
+        flags: 0, index: 1, volume: 1, attenuation: 1, timeOffset: 0,
+        entity, channel: 3, position,
+    });
+
+    test('SND_ENT-only sounds resolve the emitting player origin', () => {
+        const events: { e: string; d: any }[] = [];
+        const s = new Session('t', {
+            host: '127.0.0.1', port: 27910,
+            broadcast: (e, d) => events.push({ e, d: d as any }),
+            statusQuery: () => {},
+            clientOpts: { autoReconnect: false },
+        });
+        s.parser.onFrame?.(frameWithPlayer(3, [100, 200, 0]));
+
+        // Footstep-style event: outer mvd_sound, entity 4 = clientNum 3.
+        s.parser.onSound?.(snd(4));
+        const sounds = () => events.filter((x) => x.e === 'sound');
+        expect(sounds()[0].d.position).toEqual([100, 200, 0]);
+        expect(sounds()[0].d.posDerived).toBe(true);
+
+        // Wire-provided positions win over derivation.
+        s.parser.onSound?.(snd(4, [9, 9, 9]));
+        expect(sounds()[1].d.position).toEqual([9, 9, 9]);
+        expect(sounds()[1].d.posDerived).toBeUndefined();
+
+        // Non-player edicts resolve nothing → position stays undefined.
+        s.parser.onSound?.(snd(60));
+        expect(sounds()[2].d.position).toBeUndefined();
+        s.dispose();
+    });
+});
+
 describe('TE_DAMAGE_DEALT damage stats', () => {
     test('unicast damage-dealt TEs accumulate on the recipient player', () => {
         const s = make();
