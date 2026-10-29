@@ -279,23 +279,6 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
-.round-scores {
-    font-size: 11px;
-    color: #888;
-    margin: 2px 0 6px;
-    font-variant-numeric: tabular-nums;
-}
-
-.round-scores .round-score {
-    margin-right: 8px;
-}
-
-.round-scores .round-score.team1,
-.round-scores .round-score.team2,
-.round-scores .round-score.team3 {
-    color: #ddd;
-}
-
 #scoreboard td.name-cell {
     display: flex;
     align-items: center;

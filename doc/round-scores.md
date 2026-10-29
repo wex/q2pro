@@ -8,8 +8,7 @@ in `fix/centerprint-round-dedup`; this adds end markers + score capture).
 
 Each `RoundStats` now carries `teamScores` (`{team1, team2, team3}` — the
 `STAT_TEAM{1,2,3}_SCORE` tally at the round's close) and `endedAt`; the
-snapshot derives `winner` (`'team1'|'team2'|'team3'|'tie'|undefined`). The
-stats panel shows a per-round score strip under Match stats.
+snapshot derives `winner` (`'team1'|'team2'|'team3'|'tie'|undefined`).
 
 ## Signals
 
@@ -54,9 +53,10 @@ no team scores were ever seen.
 
 ## UI
 
-`#stats-section` gains a `#round-scores` strip: one chip per scored round
+~~`#stats-section` gains a `#round-scores` strip: one chip per scored round
 (`R{index}: T1 a–b T2`, `T3` appended when non-zero), the winning team's
-chip highlighted.
+chip highlighted.~~ Removed from the browser panel — `teamScores`/`winner`
+remain on the snapshot rounds for API consumers.
 
 ## Verification
 

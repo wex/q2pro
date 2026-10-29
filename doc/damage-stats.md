@@ -6,8 +6,9 @@ Branch: `feat/damage-stats`. Implements AUDIT-2 feature suggestion 2.
 
 Per-round, per-player **damage dealt** in the stats tracker, fed by AQ2's
 `TE_DAMAGE_DEALT` temp entity. Surfaced as `damageDealt` on
-`PlayerRoundStats` (`GET /stats`, `stats` SSE, `/events` snapshot) and as a
-`Dmg` column in the Match-stats panel.
+`PlayerRoundStats` (`GET /stats`, `stats` SSE, `/events` snapshot). The
+browser Match-stats panel no longer renders a `Dmg` column — the value
+remains available to API consumers.
 
 ## Protocol
 
@@ -47,13 +48,13 @@ Properties:
 
 ## UI
 
-`#stats` gains a `Dmg` column between `Hits` and `Locations`; rows still
-sort by kills. Damage lands under the per-round rows in the snapshot for
-consumers that render rounds.
+~~`#stats` gains a `Dmg` column between `Hits` and `Locations`.~~ Removed
+from the browser panel — `damageDealt` still lands under the per-round and
+total rows in the snapshot for consumers that render rounds.
 
-## Troubleshooting: `Dmg` shows all zeros
+## Troubleshooting: `damageDealt` is all zeros
 
-`Dmg` only accumulates when the stream actually carries `TE_DAMAGE_DEALT`.
+`damageDealt` only accumulates when the stream actually carries `TE_DAMAGE_DEALT`.
 Run the app with `TS_MVD_DEBUG=1 npm run app` — every arriving event logs
 `[te] DAMAGE_DEALT client=N amount=M`. If none appear:
 

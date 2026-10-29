@@ -992,47 +992,17 @@ function renderTeamScores() {
 }
 
 /** Match-stats panel fed by the 'stats' SSE snapshot (see doc/session-stats.md). */
-const elRoundScores = document.querySelector('#round-scores');
-
-const elDmgTh = document.getElementById('dmg-th');
-
 function renderStats(snap) {
     if (!elStatsBody || !snap || !snap.totals) return;
-    // Surface whether the stream carries TE_DAMAGE_DEALT at all — all-zero
-    // Dmg with 0 events means old-protocol attackers, not a stats bug.
-    if (elDmgTh) {
-        const n = snap.totals.damageEvents ?? 0;
-        elDmgTh.title = n > 0
-            ? `${n} TE_DAMAGE_DEALT events in stream`
-            : 'No TE_DAMAGE_DEALT in stream (attackers on old clients / non-TNG server)';
-    }
-    if (elRoundScores) {
-        const chips = (snap.rounds || [])
-            .filter((r) => r.teamScores)
-            .map((r) => {
-                const s = r.teamScores;
-                const parts = [`T1 ${s.team1}`, `T2 ${s.team2}`];
-                if (s.team3) parts.push(`T3 ${s.team3}`);
-                const cls = r.winner ? `round-score ${r.winner}` : 'round-score';
-                return `<span class="${cls}">R${r.index}: ${parts.join('–')}</span>`;
-            });
-        elRoundScores.innerHTML = chips.join(' ');
-    }
     const rows = Object.entries(snap.totals.players || {})
         .map(([name, p]) => ({ name, ...p }))
         .sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));
-    elStatsBody.innerHTML = rows.map((p) => {
-        const locs = Object.entries(p.hitsByLocation || {})
-            .sort((a, b) => b[1] - a[1])
-            .map(([loc, n]) => `${loc}:${n}`)
-            .join(' ');
-        return `<tr><td>${escapeHtml(p.name)}</td>`
+    elStatsBody.innerHTML = rows.map((p) =>
+        `<tr><td>${escapeHtml(p.name)}</td>`
             + `<td class="num">${p.kills}</td>`
             + `<td class="num">${p.deaths}</td>`
-            + `<td class="num">${p.hits}</td>`
-            + `<td class="num">${p.damageDealt ?? 0}</td>`
-            + `<td>${escapeHtml(locs)}</td></tr>`;
-    }).join('');
+            + `<td class="num">${p.hits}</td></tr>`
+    ).join('');
 }
 
 function renderScoreboard() {
