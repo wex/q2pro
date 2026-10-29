@@ -1,10 +1,12 @@
-# Chat deduplication in MVD2 playback
+# Chat / obituary / centerprint deduplication in MVD2 playback
 
 ## Scope
 
-This note documents how `ts-mvd` dedupes `PRINT_CHAT` events when parsing
-MVD2 streams produced by Q2Pro. It applies to any consumer that subscribes
-to `MvdFrameParser.onChat` (e.g. the `app.ts` public UI SSE broadcast).
+This note documents how `ts-mvd` dedupes per-recipient unicast duplicates
+(`svc_print` at `PRINT_CHAT`/`PRINT_MEDIUM`, and `svc_centerprint`) when
+parsing MVD2 streams produced by Q2Pro. It applies to any consumer that
+subscribes to `MvdFrameParser.onChat` / `onObituary` / `onCenterPrint`
+(e.g. the `app.ts` public UI SSE broadcast).
 
 ## Problem
 
@@ -59,18 +61,26 @@ byte in the outer unicast framing; the inner `svc_print` payload
 
 ## Fix
 
-`MvdFrameParser` now maintains a small per-tick dedup set keyed on
-`(level, text)` and clears it on the `mvd_frame` boundary (and on
-`serverdata` / explicit `reset()`).
+`MvdFrameParser` maintains a small per-tick dedup set cleared on the
+`mvd_frame` boundary (and on `serverdata` / explicit `reset()`). It keys
+`svc_print` lines by `(level, text)` and `svc_centerprint` lines by text
+(`cp\x00` prefix in the same set).
 
-The dedup is applied only inside `emitPrint`'s `PRINT_CHAT` branch and
-only gates `onChat`. `onPrint` still fires for every `svc_print` in the
-raw stream, so consumers that want to observe the underlying
+The `svc_print` dedup gates `onChat` (PRINT_CHAT) and `onObituary`
+(PRINT_MEDIUM — teamplay `PrintDeathMessage` unicasts one copy per
+observer, same mechanism as chat). `onPrint` still fires for every
+`svc_print` in the raw stream, so consumers that want the underlying
 per-recipient prints (e.g. for diagnostics or protocol tracing) are
-unaffected. Other print levels (`LOW`, `MEDIUM`, `HIGH`) and the
-derived `onObituary` / `onHit` / `onHitTaken` callbacks are not
-deduped — obituaries already arrive via broadcast `mvd_print` and hit
-messages legitimately differ per recipient.
+unaffected. `PRINT_LOW`/`PRINT_HIGH` and the derived `onHit` /
+`onHitTaken` callbacks are not deduped — hit messages legitimately
+differ per recipient.
+
+`svc_centerprint` gets the same treatment because `PF_centerprintf` is
+also a unicast: `CenterPrintAll("LIGHTS…/CAMERA…/ACTION!")` (AQ2's
+round-start signal) arrives as N identical payloads in one tick and
+would otherwise fire once per connected client — one `ACTION!` must
+open exactly one stats round. Unlike prints there is no un-deduped raw
+callback for centerprints.
 
 The dedup signature uses the full chat text including any trailing
 newline, so two different players chatting with the same body in the
@@ -104,15 +114,13 @@ the chat panel. The filter is applied both to the name portion and the
 body, and the cleaned string is what ends up in `ChatEvent.raw` /
 `ChatEvent.text`.
 
-## Obituary raw-only fallback
+## Obituary classification
 
-`classifyObituary` previously returned `null` when no vanilla/TNG death
-template matched, which silenced every AQ2/Action mod obituary (e.g.
-`"VICTIM has a hole in his head from ATTACKER's Mark 23 pistol"`) and
-left the UI kill feed empty. It now falls back to a raw-only event
-`{ victim: '', attacker: null, weapon: null, raw }` so unknown templates
-still surface. UI consumers should treat `victim === ''` as "render the
-raw line verbatim"; `public/app.js` does this in `appendKillfeed`.
+`classifyObituary` now matches the complete AQ2 `ClientObituary` table
+(see `doc/aq2-obituaries.md`) and tags every event with
+`kind: kill | world | suicide | info`. Non-death PRINT_MEDIUM lines
+(bot nav notices, renames) become `kind: 'info'` with `victim === ''` —
+the "render the raw line" contract — and render dimmed in the kill feed.
 
 ## Non-goals
 

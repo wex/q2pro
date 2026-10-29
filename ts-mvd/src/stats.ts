@@ -57,17 +57,21 @@ export interface StatsTrackerOptions {
 
 /**
  * Heuristic round-boundary patterns. AQ2 has no protocol marker for round
- * start/end; its mods signal via centerprints ("FIGHT!", "Round N") and
- * end-of-round scoreboard layouts. These patterns are deliberately narrow —
- * false positives only split stats, they never corrupt them. Configurable
- * via `StatsTrackerOptions.roundPatterns`.
+ * start/end; TNG signals via `CenterPrintAll("LIGHTS…/CAMERA…/ACTION!")`
+ * (src/action/a_team.c) and broadcasts end-of-match prints
+ * ("Timelimit hit.", "Fraglimit hit.", "Match ended.") — the same strings
+ * `MVD_ParsePrint` special-cases. These patterns are deliberately narrow —
+ * false positives only split stats, never corrupt them. Configurable via
+ * `StatsTrackerOptions.roundPatterns`.
  */
 export const DEFAULT_ROUND_PATTERNS: readonly RegExp[] = [
     /^fight!*$/i,
+    /^action!?$/i,
     /^round\s+\d+/i,
     /round begins/i,
     /match start/i,
-    /timelimit/i,
+    /^(timelimit|fraglimit) hit/i,
+    /match ended/i,
 ];
 
 const MAX_ROUNDS_DEFAULT = 64;

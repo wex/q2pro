@@ -482,6 +482,14 @@ describe('HTTP control surface', () => {
             expect(res.body.rounds).toHaveLength(2);
         });
 
+        test('broadcast mvd_print match markers open rounds; unicast prints do not', async () => {
+            parser.onPrint!({ level: 2, text: 'Timelimit hit.', clientNum: undefined });
+            parser.onPrint!({ level: 2, text: 'You hit Bob in the head', clientNum: 3 });
+            const res = await request(httpServer).get('/stats');
+            expect(res.status).toBe(200);
+            expect(res.body.rounds).toHaveLength(2);
+        });
+
         test('stats are broadcast over SSE on kills', () => {
             const w: string[] = [];
             const fake = new EventEmitter() as any;

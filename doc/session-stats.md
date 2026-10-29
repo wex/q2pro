@@ -12,11 +12,11 @@ parser already produces — no protocol changes. Exposed over HTTP
 
 | Signal | Feeds |
 |---|---|
-| `onObituary` | kills + weapon attribution (`weapon` template token) |
+| `onObituary` | kills + weapon attribution (AQ2 `ClientObituary` table — see `doc/aq2-obituaries.md`; `kind:'info'` lines are ignored) |
 | `onDeath` | deaths — the `STAT_HEALTH` → 0 edge is authoritative |
 | `onHit` | hits dealt + body-location tally (`head`/`chest`/`stomach`/`legs`/`body`) |
 | `onHitTaken` | hits received |
-| `onLayout` / `onCenterPrint` text | round-boundary detection |
+| `onLayout` / `onCenterPrint` / broadcast `onPrint` text | round-boundary detection |
 
 `StatsTracker` lives in `src/stats.ts` — pure module, injectable clock and
 `namer` callback for testing.
@@ -24,11 +24,21 @@ parser already produces — no protocol changes. Exposed over HTTP
 ## Caveats (deliberate design limits)
 
 - **Round detection is heuristic.** There is no MVD-level round marker; AQ2
-  signals via centerprint/layout text. `DEFAULT_ROUND_PATTERNS` covers
-  `FIGHT!`, `Round N`, `round begins`, `match start`, `timelimit` — narrow on
-  purpose: a false positive only splits a round, never corrupts data.
-  Streams without boundary text accumulate into a single round. Override via
+  TNG signals round start via `CenterPrintAll("LIGHTS…/CAMERA…/ACTION!")`
+  (`src/action/a_team.c`) and match end via broadcast prints
+  (`Timelimit hit.`, `Fraglimit hit.`, `Match ended.` — the same strings
+  `MVD_ParsePrint` special-cases). `DEFAULT_ROUND_PATTERNS` covers
+  `FIGHT!`, `ACTION!`, `Round N`, `round begins`, `match start`,
+  `^(timelimit|fraglimit) hit`, `match ended` — narrow on purpose: a false
+  positive only splits a round, never corrupts data. The match-end prints
+  are fed from **broadcast** `mvd_print` ops only (`clientNum ===
+  undefined`); unicast prints are per-recipient and excluded. Streams
+  without boundary text accumulate into a single round. Override via
   `StatsTrackerOptions.roundPatterns`.
+- **Centerprints dedupe per tick.** `PF_centerprintf` is a unicast, so
+  `CenterPrintAll` arrives once per connected client; the parser collapses
+  same-text duplicates within a tick (same mechanism as chat/obituaries —
+  see `doc/chat-dedup.md`), so one `ACTION!` opens exactly one round.
 - **Name resolution lags the roster.** Names resolve through the playerskin
   configstrings (`"name\skin"` at `csLayout().playerskins + num`) *at event
   time* — events fired before configstrings populate land under the numeric

@@ -981,7 +981,17 @@ export class MvdFrameParser {
                 case SvcOp.CenterPrint: {
                     const text = r.readString();
                     if (clientNum >= 0) {
-                        this.onCenterPrint?.({ clientNum, text });
+                        // PF_centerprintf is a unicast → one mvd_unicast per
+                        // recipient, so CenterPrintAll arrives as N identical
+                        // svc_centerprint ops in the same tick. Dedupe by text
+                        // through the print set (cleared on mvd_frame) —
+                        // AQ2's "LIGHTS.../CAMERA.../ACTION!" triple would
+                        // otherwise fire once per connected client.
+                        const key = `cp\x00${text}`;
+                        if (!this.printSeenThisTick.has(key)) {
+                            this.printSeenThisTick.add(key);
+                            this.onCenterPrint?.({ clientNum, text });
+                        }
                     }
                     break;
                 }

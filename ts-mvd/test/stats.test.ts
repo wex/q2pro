@@ -104,10 +104,21 @@ describe('StatsTracker round boundaries', () => {
 
     test('default patterns cover the AQ2 boundary strings', () => {
         const s = tracker();
-        for (const text of ['FIGHT!', 'Round 4', 'match start', 'timelimit hit']) {
+        for (const text of ['FIGHT!', 'Round 4', 'match start', 'timelimit hit',
+            'ACTION!', 'Fraglimit hit.', 'Match ended.']) {
             expect(s.noteText(text)).toBe(true);
         }
-        expect(s.snapshot().rounds).toHaveLength(5);
+        expect(s.snapshot().rounds).toHaveLength(8);
+    });
+
+    test('MOTD centerprints no longer open rounds (AUDIT-2 bug 2)', () => {
+        const s = tracker();
+        // AQ2 sends this to every connecting player — the old /timelimit/i
+        // matched it and opened a bogus round per join.
+        expect(s.noteText('AQ2: The Next Generation\nFraglimit: none  Timelimit: 20\nMap: urban2')).toBe(false);
+        expect(s.noteText('Timelimit: 20')).toBe(false);
+        // Anchored to the actual end-of-match broadcast.
+        expect(s.noteText('Timelimit hit.')).toBe(true);
     });
 
     test('custom roundPatterns replace the defaults', () => {

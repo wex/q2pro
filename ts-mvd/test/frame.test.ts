@@ -470,6 +470,26 @@ describe('inner svc ops', () => {
         expect(tes).toEqual([{ type: 1, position: [1, 2, 3] }]);
     });
 
+    test('per-recipient svc_centerprint duplicates dedupe within a tick', () => {
+        const parser = new MvdFrameParser();
+        const cps: Array<{ clientNum: number; text: string }> = [];
+        parser.onCenterPrint = (ev) => cps.push(ev);
+        const cp = (t: string) => Buffer.concat([Buffer.from([15]), Buffer.from(t + '\0')]);
+        const uni = (n: number, p: Buffer) => Buffer.concat([Buffer.from([8, p.length, n]), p]);
+        // CenterPrintAll → one mvd_unicast per recipient in the same tick.
+        parser.parse(Buffer.concat([uni(0, cp('LIGHTS...')), uni(1, cp('LIGHTS...')), uni(18, cp('LIGHTS...'))]));
+        // A different text in the same tick is not swallowed.
+        parser.parse(uni(0, cp('CAMERA...')));
+        expect(cps).toEqual([
+            { clientNum: 0, text: 'LIGHTS...' },
+            { clientNum: 0, text: 'CAMERA...' },
+        ]);
+        // mvd_frame boundary resets the window.
+        parser.parse(Buffer.from([6, 0, 0xff, 0, 0]));
+        parser.parse(uni(2, cp('LIGHTS...')));
+        expect(cps).toHaveLength(3);
+    });
+
     test('inner svc_configstring inside unicast fires onConfigString', () => {
         const parser = new MvdFrameParser();
         const events: Array<{ index: number; value: string }> = [];

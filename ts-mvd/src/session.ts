@@ -347,9 +347,19 @@ export class Session {
             if (this.stats.noteText(ev.text)) this.broadcastStats();
         };
 
-        // Centerprints carry AQ2's round-boundary signals ("FIGHT!" etc.).
+        // Centerprints carry AQ2's round-boundary signals ("FIGHT!"/"ACTION!").
         parser.onCenterPrint = (ev: CenterPrintEvent) => {
             if (this.stats.noteText(ev.text)) this.broadcastStats();
+        };
+
+        // End-of-match broadcasts ("Timelimit hit.", "Fraglimit hit.",
+        // "Match ended.") arrive as mvd_print ops (no clientNum). Unicast
+        // prints (hit markers etc.) are per-recipient and stay out of
+        // round detection.
+        parser.onPrint = (ev) => {
+            if (ev.clientNum === undefined && this.stats.noteText(ev.text)) {
+                this.broadcastStats();
+            }
         };
 
         // TE_BLOOD / TE_SPARKS / TE_BULLET_SPARKS near a player → damage FX.
