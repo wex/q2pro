@@ -319,12 +319,15 @@ tightening left open in AUDIT.md item 8).
 
 ## Feature suggestions
 
-Status as of 2026-10-29: 1, 3–7 implemented on the fix branches above. 2 is partially
-in place — `TE_DAMAGE_DEALT` parses and surfaces `count`, but no per-round damage
-column was built (remains a future item). Within 3, `ACTION!` opens rounds and
-match-end broadcasts close them, but `teamScores` on `RoundStats` was not added.
-Within 6, a `reconnectPending` getter was chosen over a separate `Reconnecting`
-state; `Session.dispose()` landed.
+Status as of 2026-10-29: all seven implemented. 2 landed in `feat/damage-stats`
+(`e3b9c0ea`): `TempEntityEvent.clientNum` carries the unicast recipient (the
+attacker), `noteDamageDealt` accumulates per-round/totals `damageDealt`, stats
+panel gains a `Dmg` column — the hit-marker number AQ2 itself reports. 3's
+remainder landed in `feat/round-scores` (`ef35a587`): `"The round is over:"`
+end-marker closes rounds without opening a phantom; `noteScores` stamps each
+round's `teamScores`/`winner` (demo-verified: the `ACTION!` round closes
+`{0,1,0}` → `winner: team2`). Within 6, a `reconnectPending` getter was chosen
+over a separate `Reconnecting` state; `Session.dispose()` landed.
 
 1. **Table-driven AQ2 obituary parser** (fixes bug 1). Port the `ClientObituary` table
    from `src/action/p_client.c` into a `src/aq2-obituaries.ts` module with a parity test
