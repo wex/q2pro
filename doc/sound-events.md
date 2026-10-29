@@ -77,8 +77,9 @@ The outer `mvd_sound` op never carries `SND_POS` — the server derives the
 entity's origin when re-emitting to real clients. `Session` mirrors that:
 when an entity-attached event has no wire position, it looks up
 `players.get(entity - 1)` (edicts 1..maxclients are the game clients) and
-broadcasts the player's last frame origin as `position`, flagged
-`posDerived: true`. This covers footsteps, pain calls, and any other
+broadcasts the player's last frame origin — converted to world coords via
+`originToWorld`, since `PlayerState.origin` is raw pmove units — as
+`position`, flagged `posDerived: true`. This covers footsteps, pain calls, and any other
 `gi.sound()`-style audio; the derived position can lag one frame when the
 sound op precedes `mvd_frame` in the same message. The UI renders derived
 pings as a smaller, dimmer pulse to distinguish "player made noise" from

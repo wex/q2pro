@@ -416,7 +416,9 @@ export class Session {
             if (!position && ev.entity > 0) {
                 const p = this.players.get(ev.entity - 1);
                 if (p) {
-                    position = p.origin;
+                    // PlayerState.origin is raw pmove units — the SSE payload
+                    // uses world coords like serializePlayer/death events.
+                    position = MvdFrameParser.originToWorld(p.origin);
                     derived = true;
                 }
             }

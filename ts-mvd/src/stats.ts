@@ -63,6 +63,10 @@ export interface StatsSnapshot {
     totals: {
         players: Record<string, PlayerRoundStats>;
         weaponKills: Record<string, number>;
+        /** Count of `TE_DAMAGE_DEALT` events seen — nonzero proves the
+         *  stream carries AQ2's hit-marker TE even when per-player
+         *  `damageDealt` attributions look wrong. */
+        damageEvents: number;
     };
 }
 
@@ -129,6 +133,7 @@ export class StatsTracker {
     private roundIndex = 0;
     private latestScores: ScoreTally = { team1: 0, team2: 0, team3: 0 };
     private sawScores = false;
+    private damageEventCount = 0;
 
     constructor(opts: StatsTrackerOptions = {}) {
         this.namer = opts.namer ?? (() => undefined);
@@ -217,6 +222,7 @@ export class StatsTracker {
      * (`TempEntityEvent.clientNum`), `damage` is the TE's count field.
      */
     noteDamageDealt(ev: { attacker: number; damage: number }): void {
+        this.damageEventCount++;
         this.player(this.nameFor(ev.attacker)).damageDealt += ev.damage;
     }
 
@@ -263,11 +269,16 @@ export class StatsTracker {
         this.roundIndex = 0;
         this.latestScores = { team1: 0, team2: 0, team3: 0 };
         this.sawScores = false;
+        this.damageEventCount = 0;
         this.newRound();
     }
 
     snapshot(): StatsSnapshot {
-        const totals: StatsSnapshot['totals'] = { players: {}, weaponKills: {} };
+        const totals: StatsSnapshot['totals'] = {
+            players: {},
+            weaponKills: {},
+            damageEvents: this.damageEventCount,
+        };
         const rounds = this.rounds.map((r) => {
             const players: Record<string, PlayerRoundStats> = {};
             for (const [name, p] of r.players) {

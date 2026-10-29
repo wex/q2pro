@@ -121,7 +121,8 @@ describe('entity-attached sound pings', () => {
             statusQuery: () => {},
             clientOpts: { autoReconnect: false },
         });
-        s.parser.onFrame?.(frameWithPlayer(3, [100, 200, 0]));
+        // Raw pmove origin 800/1600 = world 100/200 (0.125 units).
+        s.parser.onFrame?.(frameWithPlayer(3, [800, 1600, 0]));
 
         // Footstep-style event: outer mvd_sound, entity 4 = clientNum 3.
         s.parser.onSound?.(snd(4));

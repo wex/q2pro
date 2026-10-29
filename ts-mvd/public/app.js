@@ -993,8 +993,18 @@ function renderTeamScores() {
 /** Match-stats panel fed by the 'stats' SSE snapshot (see doc/session-stats.md). */
 const elRoundScores = document.querySelector('#round-scores');
 
+const elDmgTh = document.getElementById('dmg-th');
+
 function renderStats(snap) {
     if (!elStatsBody || !snap || !snap.totals) return;
+    // Surface whether the stream carries TE_DAMAGE_DEALT at all — all-zero
+    // Dmg with 0 events means old-protocol attackers, not a stats bug.
+    if (elDmgTh) {
+        const n = snap.totals.damageEvents ?? 0;
+        elDmgTh.title = n > 0
+            ? `${n} TE_DAMAGE_DEALT events in stream`
+            : 'No TE_DAMAGE_DEALT in stream (attackers on old clients / non-TNG server)';
+    }
     if (elRoundScores) {
         const chips = (snap.rounds || [])
             .filter((r) => r.teamScores)
