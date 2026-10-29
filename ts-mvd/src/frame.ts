@@ -1,5 +1,6 @@
 import { BufferReader } from './buffer';
 import { classifyAq2Obituary, ObituaryKind, HitLocationKind } from './aq2-obituaries';
+import { csLayout } from './player-loadout';
 import {
     MvdOp,
     MvdFlags,
@@ -1491,7 +1492,18 @@ export class MvdFrameParser {
         switch (index) {
             case Stat.Team1Score: this.teamScores.team1 = value; break;
             case Stat.Team2Score: this.teamScores.team2 = value; break;
-            case Stat.Team3Score: this.teamScores.team3 = value; break;
+            case Stat.Team3Score: {
+                // Stat slot 31 is overloaded in AQ2: SetCTFStats (a_ctf.c)
+                // writes STAT_TEAM2_HEADER — a configstring *image* index —
+                // while teamplay/domination write STAT_TEAM3_SCORE only when
+                // teamCount == 3. Pic indices always live at or above the
+                // images configstring base (544 vanilla / 10302 EXTLIMITS);
+                // real team scores stay far below it. Anything in the images
+                // range is a header pic → suppress the phantom third team.
+                const imagesBase = csLayout(this.extended).images;
+                if (Math.abs(value) < imagesBase) this.teamScores.team3 = value;
+                break;
+            }
             case Stat.Layouts: this.layoutsFlags = value; break;
         }
     }

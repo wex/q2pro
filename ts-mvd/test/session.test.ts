@@ -53,6 +53,27 @@ describe('MVD dummy slot', () => {
     });
 });
 
+describe('replay start', () => {
+    test('startReplay broadcasts an initial replayState with real messageCount', () => {
+        const events: { e: string; d: any }[] = [];
+        const s = new Session('t', {
+            host: '127.0.0.1',
+            port: 27910,
+            broadcast: (e, d) => events.push({ e, d: d as any }),
+            statusQuery: () => {},
+            clientOpts: { autoReconnect: false },
+        });
+        s.startReplay(DEMO_PATH);
+        // The UI needs messageCount immediately — without an initial
+        // broadcast the scrubber stayed at the previous replay's position.
+        const rs = events.find((x) => x.e === 'replayState');
+        expect(rs).toBeDefined();
+        expect(rs!.d.position).toBe(0);
+        expect(rs!.d.messageCount).toBeGreaterThan(0);
+        s.dispose();
+    });
+});
+
 describe('replay seek catch-up', () => {
     test('catch-up messages rebuild state silently — only seeked broadcasts', () => {
         const events: string[] = [];

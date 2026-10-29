@@ -1264,11 +1264,20 @@ function connectSSE() {
         configstrings = data.configstrings || {};
         invalidateConfigCaches();
         checkMapChange();
-        // Map/gamestate changed: clear transient feeds.
+        // Map/gamestate changed: clear transient feeds and FX state —
+        // player slots remap, so a follow-lock or stale pings/particles from
+        // the previous stream must not bleed into the new one.
         elKillfeed.innerHTML = '';
         elChat.innerHTML = '';
         scoreboardState = { teamScores: { team1: 0, team2: 0, team3: 0 }, layoutsFlags: 0, layoutText: '', players: {} };
         loadoutCache = {};
+        lockedPlayerNum = null;
+        flashes.clear();
+        lastDamageByVictim.clear();
+        bursts.length = 0;
+        particles.length = 0;
+        deaths.length = 0;
+        soundPings.length = 0;
         players = [];
         updatePlayerCount();
         // Map change: reset elapsed gametime; the next frame event will start it.
@@ -1549,6 +1558,13 @@ async function refreshSessionState(opts = {}) {
         if (!res.ok) return;
         const data = await res.json();
         setMode(data.mode || 'idle');
+        // /state carries the server-authoritative replay payload — consume it
+        // so the scrubber reflects real position/messageCount even when the
+        // replayState SSE events haven't arrived yet (fresh replay start).
+        if (data.replay) {
+            replayState = data.replay;
+            updateReplayBar();
+        }
         if (data.mode === 'idle' && opts.reopen) {
             openModal();
         } else if (data.mode !== 'idle') {

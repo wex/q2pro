@@ -30,6 +30,13 @@ stats panel shows a per-round score strip under Match stats.
   next round opens, so the close-time ordering doesn't lose the result.
 - All-zero tallies are never stamped — DM streams and pre-score segments
   keep `teamScores` absent, not `{0,0,0}` noise.
+- Stat slot 31 is overloaded in AQ2: `SetCTFStats` (`a_ctf.c:1150`) writes
+  `STAT_TEAM2_HEADER` — a configstring *image* index — while teamplay /
+  domination write `STAT_TEAM3_SCORE` only when `teamCount == 3`
+  (`a_team.c:3261`). `applyStat` treats the slot as a score only when
+  `|value|` is below the layout's `images` configstring base (544 vanilla /
+  10302 EXTLIMITS); pic indices always land at/above it, real scores stay
+  far below. Without this gate CTF streams show a phantom `T3: <pic idx>`.
 
 ## Snapshot shape
 

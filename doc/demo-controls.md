@@ -58,9 +58,21 @@ backward works; `stop()` remains the teardown that drops it.
 
 A minimal control bar appears in the top status pill while a replay is
 active: Pause/Resume button, a seek slider, and a speed select
-(0.5/1/2/4×). Since one MVD message ≈ one server frame, the slider advances
-locally between sparse `replayState` broadcasts — an approximation that can
-drift a few ticks on streams with extra unicast messages.
+(0.5/1/2/4×). `startReplay` broadcasts `replayStart` *and* an initial
+`replayState` right after `play()` (once `decode()` has populated
+`messageCount`), so the UI learns the real length immediately — without it
+the slider had no `messageCount` to advance against and kept showing the
+previous replay's position. `/state` also carries `replay`, which the
+browser consumes on every refresh cycle. Since one MVD message ≈ one
+server frame, the slider advances locally between sparse `replayState`
+broadcasts — an approximation that can drift a few ticks on streams with
+extra unicast messages.
+
+Switching replays (or maps mid-stream) resets all transient UI state:
+`serverdata` clears the follow-lock (`lockedPlayerNum`), scoreboard,
+loadout cache, kill feed/chat, and the map FX queues (sound pings,
+particles, bursts, deaths, muzzle flashes) so nothing from the previous
+stream bleeds through.
 
 ## Tests
 

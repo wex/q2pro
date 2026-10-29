@@ -720,3 +720,35 @@ describe('muzzle flash ops', () => {
         expect(evs).toEqual([{ entity: 9, weapon: 0x9f, silenced: false }]);
     });
 });
+
+describe('team score stats', () => {
+    // Minimal mvd_frame (old protocol): op + portalLen + packetplayers +
+    // packetentities terminator. Player slot 5 carries PPS_STATS only.
+    const frameWithStat31 = (value: number) => {
+        const v = Buffer.alloc(2);
+        v.writeInt16LE(value, 0);
+        return Buffer.concat([
+            Buffer.from([
+                6,              // mvd_frame
+                0,              // portalLen = 0
+                5,              // player number
+                0x00, 0x40,     // bits = PPS_STATS (1<<14)
+                0x00, 0x00, 0x00, 0x80, // statbits = bit 31
+            ]),
+            v,
+            Buffer.from([255,   // CLIENTNUM_NONE
+                0, 0,           // entity bits=0, number=0 → end
+            ]),
+        ]);
+    };
+
+    test('stat 31 ≥ images base is a CTF header pic, not a team3 score', () => {
+        const parser = new MvdFrameParser();
+        const frames: { team1: number; team2: number; team3: number }[] = [];
+        parser.onFrame = (ev) => frames.push(ev.teamScores);
+        parser.parse(frameWithStat31(544));  // CS_IMAGES_OLD — pic index
+        parser.parse(frameWithStat31(3));    // plausible score
+        expect(frames[0].team3).toBe(0);
+        expect(frames[1].team3).toBe(3);
+    });
+});

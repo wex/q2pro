@@ -580,6 +580,10 @@ export class Session {
         this.broadcast('replayStart', { session: this.id, file: filePath });
         console.log(`[replay] Starting ${filePath}`);
         reader.play(filePath);
+        // Decode() has populated messageCount by now — push an initial
+        // replayState so the UI learns the real length immediately instead
+        // of inferring it from the first pause/seek/control round-trip.
+        if (this.currentReplay === reader) this.broadcastReplayState();
     }
 
     stopReplay(): boolean {
