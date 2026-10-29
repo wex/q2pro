@@ -53,3 +53,30 @@ describe('replay seek catch-up', () => {
         s.dispose();
     });
 });
+
+describe('TE_DAMAGE_DEALT damage stats', () => {
+    test('unicast damage-dealt TEs accumulate on the recipient player', () => {
+        const s = make();
+        // mvd_unicast (8): len u8, clientNum u8, inner svc payload =
+        // svc_temp_entity (3) + TE_DAMAGE_DEALT (128) + damage i16.
+        const dd = (n: number, dmg: number) => {
+            const inner = Buffer.alloc(4);
+            inner[0] = 3; inner[1] = 128;
+            inner.writeInt16LE(dmg, 2);
+            return Buffer.concat([Buffer.from([8, inner.length, n]), inner]);
+        };
+        s.parser.parse(dd(5, 37));
+        s.parser.parse(dd(5, 23));
+        s.parser.parse(dd(2, 80));
+        // Multicast TEs have no recipient → ignored by damage stats.
+        const mc = Buffer.alloc(4);
+        mc[0] = 3; mc[1] = 128; mc.writeInt16LE(9, 2);
+        s.parser.parse(Buffer.concat([Buffer.from([0x0a, mc.length]), mc]));
+
+        const players = s.stats.snapshot().totals.players;
+        expect(players['5'].damageDealt).toBe(60);
+        expect(players['2'].damageDealt).toBe(80);
+        expect(Object.keys(players)).toHaveLength(2);
+        s.dispose();
+    });
+});

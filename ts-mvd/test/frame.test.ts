@@ -665,6 +665,18 @@ describe('temp entity formats', () => {
         expectParsed(tent(128, i16(37)), { type: 128, count: 37 });
     });
 
+    test('unicast TEs carry the recipient clientNum; multicast TEs do not', () => {
+        const parser = new MvdFrameParser();
+        const tes = collect(parser);
+        // mvd_unicast (8): len u8, clientNum u8, inner svc payload.
+        const dd = tent(128, i16(80));
+        parser.parse(Buffer.concat([Buffer.from([8, dd.length, 5]), dd]));
+        parser.parse(mcastAll(tent(128, i16(20))));
+        expect(parser.parseWarningCount).toBe(0);
+        expect(tes[0]).toEqual({ type: 128, count: 80, clientNum: 5 });
+        expect(tes[1]).toEqual({ type: 128, count: 20, clientNum: undefined });
+    });
+
     test('TE_FLAME stays unsupported (C parser errors on it too)', () => {
         const parser = new MvdFrameParser();
         const warnings: number[] = [];

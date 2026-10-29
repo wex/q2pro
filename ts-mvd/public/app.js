@@ -996,6 +996,7 @@ function renderStats(snap) {
             + `<td class="num">${p.kills}</td>`
             + `<td class="num">${p.deaths}</td>`
             + `<td class="num">${p.hits}</td>`
+            + `<td class="num">${p.damageDealt ?? 0}</td>`
             + `<td>${escapeHtml(locs)}</td></tr>`;
     }).join('');
 }

@@ -74,6 +74,29 @@ describe('StatsTracker aggregation', () => {
         expect(p['7'].hits).toBe(1);
         expect(p['7'].hitsByLocation).toEqual({ legs: 1 });
     });
+
+    test('noteDamageDealt accumulates per attacker and folds into totals', () => {
+        const s = tracker();
+        s.noteDamageDealt({ attacker: 0, damage: 37 });
+        s.noteDamageDealt({ attacker: 0, damage: 23 });
+        s.noteDamageDealt({ attacker: 1, damage: 80 });
+        const snap = s.snapshot();
+        expect(snap.rounds[0].players['Alice'].damageDealt).toBe(60);
+        expect(snap.rounds[0].players['Bob'].damageDealt).toBe(80);
+        expect(snap.totals.players['Alice'].damageDealt).toBe(60);
+        expect(snap.totals.players['Bob'].damageDealt).toBe(80);
+    });
+
+    test('damageDealt is per-round — a boundary resets it', () => {
+        const s = tracker();
+        s.noteDamageDealt({ attacker: 0, damage: 37 });
+        expect(s.noteText('ACTION!')).toBe(true);
+        s.noteDamageDealt({ attacker: 0, damage: 10 });
+        const snap = s.snapshot();
+        expect(snap.rounds[0].players['Alice'].damageDealt).toBe(37);
+        expect(snap.rounds[1].players['Alice'].damageDealt).toBe(10);
+        expect(snap.totals.players['Alice'].damageDealt).toBe(47);
+    });
 });
 
 describe('StatsTracker round boundaries', () => {

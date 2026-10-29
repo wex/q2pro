@@ -17,7 +17,7 @@ import * as path from 'node:path';
 import { MvdClient, MvdClientOptions } from './client';
 import { MvdDemoReader } from './demo';
 import { Mvd2Writer } from './mvd2-writer';
-import { ClientState, Stat } from './protocol';
+import { ClientState, Stat, TempEntityType } from './protocol';
 import {
     MvdFrameParser,
     PlayerState,
@@ -368,7 +368,16 @@ export class Session {
         };
 
         // TE_BLOOD / TE_SPARKS / TE_BULLET_SPARKS near a player → damage FX.
+        // TE_DAMAGE_DEALT (unicast to the attacker) → exact damage stat.
         parser.onTempEntity = (ev: TempEntityEvent) => {
+            if (
+                ev.type === TempEntityType.DamageDealt
+                && ev.clientNum !== undefined
+                && ev.count !== undefined
+            ) {
+                this.stats.noteDamageDealt({ attacker: ev.clientNum, damage: ev.count });
+                this.scheduleStatsBroadcast();
+            }
             const dmg = this.combatFx.handleTE(ev);
             if (dmg) this.broadcast('damage', { session: this.id, ...dmg });
         };

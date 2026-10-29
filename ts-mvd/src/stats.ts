@@ -18,6 +18,10 @@ export interface PlayerRoundStats {
     hits: number;
     /** Hits received (from `onHitTaken` unicast prints). */
     hitsTaken: number;
+    /** Damage dealt this round (from `TE_DAMAGE_DEALT` unicast TEs — the
+     *  same number AQ2 shows the attacker as a hit marker; excludes
+     *  friendly fire / warmup / telefrag). */
+    damageDealt: number;
     /** Dealt hits by body location: head/chest/stomach/legs/body/''. */
     hitsByLocation: Record<string, number>;
     /** Kills dealt by weapon token (obituary template; 'unknown' when null). */
@@ -118,7 +122,7 @@ export class StatsTracker {
     private player(name: string): PlayerRoundStats {
         let p = this.current.players.get(name);
         if (!p) {
-            p = { kills: 0, deaths: 0, hits: 0, hitsTaken: 0, hitsByLocation: {}, weaponsUsed: {} };
+            p = { kills: 0, deaths: 0, hits: 0, hitsTaken: 0, damageDealt: 0, hitsByLocation: {}, weaponsUsed: {} };
             this.current.players.set(name, p);
         }
         return p;
@@ -164,6 +168,15 @@ export class StatsTracker {
     }
 
     /**
+     * `onTempEntity` `TE_DAMAGE_DEALT` — AQ2 unicasts the attacker a
+     * `[short damage]` per frame; `attacker` is the unicast recipient
+     * (`TempEntityEvent.clientNum`), `damage` is the TE's count field.
+     */
+    noteDamageDealt(ev: { attacker: number; damage: number }): void {
+        this.player(this.nameFor(ev.attacker)).damageDealt += ev.damage;
+    }
+
+    /**
      * Feed layout/centerprint text for round-boundary detection.
      * Returns true when the text opened a new round.
      */
@@ -187,12 +200,13 @@ export class StatsTracker {
             for (const [name, p] of r.players) {
                 players[name] = { ...p, hitsByLocation: { ...p.hitsByLocation }, weaponsUsed: { ...p.weaponsUsed } };
                 const t = (totals.players[name] ??= {
-                    kills: 0, deaths: 0, hits: 0, hitsTaken: 0, hitsByLocation: {}, weaponsUsed: {},
+                    kills: 0, deaths: 0, hits: 0, hitsTaken: 0, damageDealt: 0, hitsByLocation: {}, weaponsUsed: {},
                 });
                 t.kills += p.kills;
                 t.deaths += p.deaths;
                 t.hits += p.hits;
                 t.hitsTaken += p.hitsTaken;
+                t.damageDealt += p.damageDealt;
                 for (const [loc, n] of Object.entries(p.hitsByLocation)) {
                     t.hitsByLocation[loc] = (t.hitsByLocation[loc] ?? 0) + n;
                 }

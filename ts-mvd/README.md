@@ -100,7 +100,7 @@ curl           http://localhost:8080/demos
 curl           http://localhost:8080/paks
 curl -X POST   'http://localhost:8080/record/start?name=match1'  # → assets/demos/match1.mvd2
 curl -X POST   http://localhost:8080/record/stop
-curl           http://localhost:8080/stats     # per-round K/D / hit locations / weapons
+curl           http://localhost:8080/stats     # per-round K/D / damage / hit locations / weapons
 ```
 
 See `doc/demo-replay.md` for the full endpoint and event reference,

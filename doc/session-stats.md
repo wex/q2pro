@@ -16,6 +16,7 @@ parser already produces — no protocol changes. Exposed over HTTP
 | `onDeath` | deaths — the `STAT_HEALTH` → 0 edge is authoritative |
 | `onHit` | hits dealt + body-location tally (`head`/`chest`/`stomach`/`legs`/`body`) |
 | `onHitTaken` | hits received |
+| `onTempEntity` (`TE_DAMAGE_DEALT`) | damage dealt — the AQ2 hit-marker number (`doc/damage-stats.md`) |
 | `onLayout` / `onCenterPrint` / broadcast `onPrint` text | round-boundary detection |
 
 `StatsTracker` lives in `src/stats.ts` — pure module, injectable clock and
@@ -49,6 +50,9 @@ parser already produces — no protocol changes. Exposed over HTTP
   the kill-feed prints.
 - **`hits` counts hits that landed**, not shots fired — there is no reliable
   per-shot signal in MVD (muzzleflash covers primary fire only).
+- **`damageDealt` is attacker-side exact** — the same number AQ2 shows as a
+  hit marker (`TE_DAMAGE_DEALT` unicast); it credits damage dealt but names
+  no victim, and old protocols never emit it (see `doc/damage-stats.md`).
 
 ## API
 
@@ -58,6 +62,10 @@ parser.onObituary = (ev) => stats.noteObituary(ev);
 parser.onDeath    = (ev) => stats.noteDeath(ev);
 parser.onHit      = (ev) => stats.noteHit(ev);
 parser.onHitTaken = (ev) => stats.noteHitTaken(ev);
+parser.onTempEntity = (ev) => {
+    if (ev.type === TempEntityType.DamageDealt && ev.clientNum !== undefined)
+        stats.noteDamageDealt({ attacker: ev.clientNum, damage: ev.count! });
+};
 // layout + centerprint text:
 stats.noteText(ev.text); // true ⇒ a new round opened
 stats.snapshot();        // JSON-safe { rounds, totals }

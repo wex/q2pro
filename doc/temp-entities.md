@@ -45,7 +45,9 @@ suppresses the trailing `time` long, matching C).
 
 ## Surfaced fields
 
-`TempEntityEvent` gains `entity`, `entity2`, `count`, `color`, `dir`,
+`TempEntityEvent` gains `clientNum` (unicast recipient — for AQ2
+`TE_DAMAGE_DEALT` this is the attacker, see `doc/damage-stats.md`),
+`entity`, `entity2`, `count`, `color`, `dir`,
 `offset`, `time` — all optional and only populated when the format carries
 them. `TE_DAMAGE_DEALT`'s damage lands in `count` (a signed short —
 negative values mean healing/knockback-only events per `p_view.c`).

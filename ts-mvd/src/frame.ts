@@ -249,6 +249,10 @@ export interface CenterPrintEvent {
 
 export interface TempEntityEvent {
     type: number;
+    /** Unicast recipient clientNum; absent for multicast/broadcast TEs.
+     *  For AQ2 `TE_DAMAGE_DEALT` this is the player who dealt the damage —
+     *  the TE is unicasted to the attacker (src/action/p_view.c). */
+    clientNum?: number;
     /** World-space position (undefined if not provided by the TE). */
     position?: [number, number, number];
     /** Second world-space position for two-point TEs (rail trail, BFG laser,
@@ -1127,7 +1131,7 @@ export class MvdFrameParser {
                     break;
                 }
                 case SvcOp.TempEntity:
-                    if (!this.parseTempEntity(r)) return;
+                    if (!this.parseTempEntity(r, clientNum)) return;
                     break;
                 case SvcOp.MuzzleFlash:
                 case SvcOp.MuzzleFlash2:
@@ -1231,9 +1235,10 @@ export class MvdFrameParser {
     // ── Temp-entity parsing ─────────────────────────────────────────
 
     /** Returns false if parsing cannot safely continue on the inner reader. */
-    private parseTempEntity(r: BufferReader): boolean {
+    private parseTempEntity(r: BufferReader, clientNum: number): boolean {
         if (r.remaining < 1) return false;
         const type = r.readUInt8();
+        const recipient = clientNum >= 0 ? clientNum : undefined;
 
         const fmt = TE_FORMAT.get(type);
         if (fmt === undefined) {
@@ -1244,7 +1249,7 @@ export class MvdFrameParser {
                 opcode: type,
                 offset: r.position,
             });
-            this.onTempEntity?.({ type });
+            this.onTempEntity?.({ type, clientNum: recipient });
             return false;
         }
 
@@ -1253,6 +1258,7 @@ export class MvdFrameParser {
             // evaluating its arguments when no listener is attached, leaving
             // the inner reader misaligned on listener-less parses.
             const ev = this.readTempEntityFields(r, fmt, type);
+            ev.clientNum = recipient;
             this.onTempEntity?.(ev);
             return true;
         } catch {
